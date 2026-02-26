@@ -48,6 +48,7 @@ from src.models import (
     SectionType,
 )
 from src.section_classifier import SectionClassifier
+from src.tex_to_txt import convert_tex_to_txt
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,8 @@ class Pipeline:
         self.output_path = Path(out_config.get("path", "./output/arxiv_cs_sections.parquet"))
         self.compression = out_config.get("compression", "snappy")
         self.checkpoint_interval = out_config.get("checkpoint_interval", 1000)
+        self.txt_export = out_config.get("txt_export", False)
+        self.txt_dir = Path(out_config.get("txt_dir", "./data/txt"))
 
         self.progress: dict[str, str] = {}
         if self.resume:
@@ -380,6 +383,18 @@ class Pipeline:
             source_paths[metadata.arxiv_id] = source_path
             if source_path is None:
                 self.progress[metadata.arxiv_id] = ProcessingStatus.FAILED_DOWNLOAD.value
+
+        # Step 1.5: Optional .txt export
+        if self.txt_export:
+            latex_config = self.config.get("latex", {})
+            max_file_size = latex_config.get("max_file_size", 10_000_000)
+            for metadata in batch:
+                src = source_paths.get(metadata.arxiv_id)
+                if src is not None:
+                    try:
+                        convert_tex_to_txt(src, self.txt_dir, metadata.arxiv_id, max_file_size)
+                    except Exception as e:
+                        logger.warning("txt export failed for %s: %s", metadata.arxiv_id, e)
 
         # Step 2: Process papers in parallel
         worker_args = []

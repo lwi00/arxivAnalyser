@@ -1,0 +1,46 @@
+In addition to attention layers, our model contains position-wise feed-forward networks (Section <ref>), which consist of two linear transformations with a ReLU activation in between. In fact, these networks too can be seen as a form of attention. Compare the formula for such a network with the formula for a simple dot-product attention layer (biases and scaling factors omitted):
+
+ FFN(x, W_1, W_2) = ReLU(xW_1)W_2 
+ 
+ A(q, K, V) = Softmax(qK^T)V
+
+Based on the similarity of these formulae, the two-layer feed-forward network can be seen as a kind of attention, where the keys and values are the rows of the trainable parameter matrices W_1 and W_2, and where we use ReLU instead of Softmax in the compatibility function.
+
+Given this similarity, we experimented with replacing the position-wise feed-forward networks with attention layers similar to the ones we use everywhere else our model. The multi-head-attention-over-parameters sublayer is identical to the multi-head attention described in <ref>, except that the "keys" and "values" inputs to each attention head are trainable model parameters, as opposed to being linear projections of a previous layer. These parameters are scaled up by a factor of √(d_model) in order to be more similar to activations.
+
+In our first experiment, we replaced each position-wise feed-forward network with a multi-head-attention-over-parameters sublayer with h_p=8 heads, key-dimensionality d_pk=64, and value-dimensionality d_pv=64, using n_p=1536 key-value pairs for each attention head. The sublayer has a total of 2097152 parameters, including the parameters in the query projection and the output projection. This matches the number of parameters in the position-wise feed-forward network that we replaced. While the theoretical amount of computation is also the same, in practice, the attention version caused the step times to be about 30% longer.
+
+In our second experiment, we used h_p=8 heads, and n_p=512 key-value pairs for each attention head, again matching the total number of parameters in the base model.
+
+Results for the first experiment were slightly worse than for the base model, and results for the second experiment were slightly better, see Table <ref>.
+
+Replacing the position-wise feed-forward networks with multihead-attention-over-parameters produces similar results to the base model. All metrics are on the English-to-German translation development set, newstest2013.
+
+0pt2.0ex
+ 2* 2* 
+2*h_p 2*d_pk 2*d_pv 
+ 2*n_p 
+ PPL BLEU params training
+
+ (dev) (dev) ×10^6 time 
+
+0pt2.0ex
+base 512 2048 4.92 25.8 65 12 hours
+
+0pt2.0ex
+AOP_1 512 8 64 64 1536 4.92 25.5 65 16 hours
+
+AOP_2 512 16 64 64 512 4.86 25.9 65 16 hours 
+
+In Section <ref>, we introduced Scaled dot-product attention, where we scale down the dot products by √(d_k). In this section, we will give a rough justification of this scaling factor. If we assume that q and k are d_k-dimensional vectors whose components are independent random variables with mean 0 and variance 1, then their dot product, q · k = ∑_i=1^d_k u_iv_i, has mean 0 and variance d_k. Since we would prefer these values to have variance 1, we divide by √(d_k). 
+
+In this section, we will give a rough justification of this scaling factor, that is, we will show that for any two vectors, u⃗ and v⃗, whose variance and mean are 1 and 0 respectively, the variance and the mean of the dot product are d_k and 0 respectively. Therefore, dividing by √(d_k) ensures that each component of the attention logits are normalized. The repeated layer norms at each transformer layer encourage u⃗ and v⃗ to be normalized. 
+
+ E[<u⃗,v⃗>] = ∑_k E[u_i v_i] By linearity of expectation
+ =∑_k E[u_i]E[v_i] Assuming independence
+ = 0
+
+ E[(<u⃗,v⃗>-E[<u⃗,v⃗>])^2] = E[(<u⃗,v⃗>)^2] - E[<u⃗,v⃗>]^2 
+ = E[(<u⃗,v⃗>)^2] 
+ = ∑_k E[u_i^2] E[v_i^2] By linearity of expectation and indepedence
+ = d_k

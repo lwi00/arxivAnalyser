@@ -160,6 +160,30 @@ def cmd_single(args: argparse.Namespace) -> None:
         )
 
 
+def cmd_convert(args: argparse.Namespace) -> None:
+    """Batch convert LaTeX sources to plain text .txt files.
+
+    Args:
+        args: Parsed CLI arguments with sources_dir and output_dir.
+    """
+    setup_logging("INFO")
+    logger = logging.getLogger(__name__)
+
+    from src.tex_to_txt import batch_convert_tex_to_txt
+
+    sources_dir = Path(args.sources_dir)
+    output_dir = Path(args.output_dir)
+
+    logger.info("Converting .tex → .txt: %s → %s", sources_dir, output_dir)
+    results = batch_convert_tex_to_txt(sources_dir, output_dir)
+    logger.info(
+        "Done: %d succeeded, %d failed, %d skipped",
+        results["succeeded"],
+        results["failed"],
+        results["skipped"],
+    )
+
+
 def cmd_metadata(args: argparse.Namespace) -> None:
     """Fetch and save metadata only.
 
@@ -217,6 +241,17 @@ def main() -> None:
         "--use-llm", action="store_true", help="Use LLM for ambiguous sections"
     )
 
+    # Convert command
+    convert_parser = subparsers.add_parser(
+        "convert", help="Batch convert LaTeX sources to plain text"
+    )
+    convert_parser.add_argument(
+        "--sources-dir", default="./data/sources", help="Directory with extracted LaTeX sources"
+    )
+    convert_parser.add_argument(
+        "--output-dir", default="./data/txt", help="Directory for output .txt files"
+    )
+
     # Metadata command
     meta_parser = subparsers.add_parser("metadata", help="Fetch metadata only")
     meta_parser.add_argument(
@@ -234,6 +269,8 @@ def main() -> None:
         cmd_run(args)
     elif args.command == "single":
         cmd_single(args)
+    elif args.command == "convert":
+        cmd_convert(args)
     elif args.command == "metadata":
         cmd_metadata(args)
     else:

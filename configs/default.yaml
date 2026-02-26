@@ -62,6 +62,10 @@ output:
   compression: "snappy"
   # Write intermediate checkpoints every N papers
   checkpoint_interval: 1000
+  # Enable .tex → .txt conversion (writes plain text alongside Parquet)
+  txt_export: true
+  # Directory for .txt output files
+  txt_dir: "./data/txt"
 
 # Processing settings
 processing:
