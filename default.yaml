@@ -1,0 +1,75 @@
+# ArXiv Section Extractor Configuration
+# =======================================
+
+# Target papers
+query:
+  # ArXiv categories to include (all cs.* subcategories)
+  categories:
+    - "cs.*"
+  # Date range (inclusive)
+  date_start: "2022-01-01"
+  date_end: "2025-12-31"
+
+# Download settings
+download:
+  # Where to store downloaded source files
+  data_dir: "./data"
+  # Subdirectories
+  sources_dir: "./data/sources"     # LaTeX .tar.gz files
+  # Max concurrent downloads / HEAD probes
+  max_concurrent: 5
+  # Delay between requests in seconds (be respectful to ArXiv)
+  request_delay: 3.0
+  # Probe source availability via HEAD requests before downloading
+  # Filters out papers without LaTeX source, saving bandwidth and time
+  probe_source_availability: true
+  # Use ArXiv S3 bucket (requires AWS credentials, much faster for bulk)
+  use_s3: false
+  # S3 bucket name (requester-pays)
+  s3_bucket: "arxiv"
+  # Retry settings
+  max_retries: 3
+  retry_delay: 10.0
+
+# LaTeX parsing settings
+latex:
+  # Max file size to parse (bytes) - skip very large files
+  max_file_size: 10_000_000  # 10 MB
+  # Encoding fallbacks
+  encodings:
+    - "utf-8"
+    - "latin-1"
+    - "ascii"
+
+# Section classification
+classification:
+  # Use heuristic matching first, then LLM for ambiguous cases
+  use_llm_fallback: true
+  # LLM settings (only used if use_llm_fallback is true)
+  llm:
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 1024
+    # Max papers to send to LLM (cost control)
+    max_llm_calls: 10000
+    # Batch size for LLM requests
+    batch_size: 50
+
+# Output settings
+output:
+  # Output file path
+  path: "./output/arxiv_cs_sections.parquet"
+  # Parquet compression
+  compression: "snappy"
+  # Write intermediate checkpoints every N papers
+  checkpoint_interval: 1000
+
+# Processing settings
+processing:
+  # Number of worker processes for parallel parsing
+  num_workers: 4
+  # Log level
+  log_level: "INFO"
+  # Resume from checkpoint if available
+  resume: true
+  # Progress tracking file
+  progress_file: "./data/progress.json"
