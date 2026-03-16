@@ -75,5 +75,8 @@ processing:
   log_level: "INFO"
   # Resume from checkpoint if available
   resume: true
+  # Max papers to process per run (0 = unlimited)
+  # Useful for incremental runs: pass full metadata, process N at a time
+  max_papers_per_run: 1000
   # Progress tracking file
   progress_file: "./data/progress.json"

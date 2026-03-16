@@ -188,6 +188,7 @@ class Pipeline:
         proc_config = config.get("processing", {})
         self.num_workers = proc_config.get("num_workers", 4)
         self.resume = proc_config.get("resume", True)
+        self.max_papers_per_run = proc_config.get("max_papers_per_run", 0)
         self.progress_file = Path(proc_config.get("progress_file", "./data/progress.json"))
 
         out_config = config.get("output", {})
@@ -233,26 +234,38 @@ class Pipeline:
         logger.info("Starting pipeline for %d papers", len(metadata_list))
         start_time = time.time()
 
-        # Filter out already-processed papers
+        # Filter out all previously attempted papers (completed, failed, or no_latex_source)
         if self.resume:
             pending = [
                 m for m in metadata_list
-                if self.progress.get(m.arxiv_id) != ProcessingStatus.COMPLETED.value
+                if m.arxiv_id not in self.progress
             ]
             logger.info(
-                "Resuming: %d already processed, %d pending",
+                "Resuming: %d already attempted, %d new",
                 len(metadata_list) - len(pending),
                 len(pending),
             )
         else:
             pending = metadata_list
 
+        # Apply per-run paper limit
+        if self.max_papers_per_run > 0 and len(pending) > self.max_papers_per_run:
+            logger.info(
+                "Limiting to %d papers for this run (out of %d pending)",
+                self.max_papers_per_run,
+                len(pending),
+            )
+            pending = pending[: self.max_papers_per_run]
+
         # Step 1: Filter papers with LaTeX source available
         if self.config.get("download", {}).get("probe_source_availability", True):
             pending = self._filter_latex_available(pending)
 
+        # Load existing records from previous runs
+        existing_records = self._load_existing_records()
+
         # Process in batches
-        records: list[dict] = []
+        new_records: list[dict] = []
         batch_size = self.checkpoint_interval
         total_batches = (len(pending) + batch_size - 1) // batch_size
 
@@ -269,22 +282,26 @@ class Pipeline:
             )
 
             batch_records = self._process_batch(batch)
-            records.extend(batch_records)
+            new_records.extend(batch_records)
 
-            # Write checkpoint
-            self._write_checkpoint(records)
+            # Write checkpoint (existing + new)
+            self._write_checkpoint(existing_records + new_records)
             logger.info(
-                "Checkpoint saved. Total records so far: %d", len(records)
+                "Checkpoint saved. %d new records this run, %d total",
+                len(new_records),
+                len(existing_records) + len(new_records),
             )
 
-        # Final output
-        output_path = self._write_parquet(records)
+        # Final output: merge existing + new, deduplicate by arxiv_id
+        all_records = self._merge_records(existing_records, new_records)
+        output_path = self._write_parquet(all_records)
 
         elapsed = time.time() - start_time
         logger.info(
-            "Pipeline complete. %d records written to %s in %.1f seconds",
-            len(records),
-            output_path,
+            "Pipeline complete. %d new + %d existing = %d total records in %.1f seconds",
+            len(new_records),
+            len(existing_records),
+            len(all_records),
             elapsed,
         )
         return output_path
@@ -465,6 +482,48 @@ class Pipeline:
             df = pd.DataFrame(records)
             table = pa.Table.from_pandas(df)
             pq.write_table(table, str(checkpoint_path), compression=self.compression)
+
+    def _load_existing_records(self) -> list[dict]:
+        """Load records from a previous run's Parquet file.
+
+        Returns:
+            List of record dicts from the existing file, or empty list if
+            no file exists.
+        """
+        if not self.output_path.exists():
+            return []
+
+        try:
+            df = pd.read_parquet(self.output_path)
+            records = df.to_dict("records")
+            logger.info(
+                "Loaded %d existing records from %s",
+                len(records),
+                self.output_path,
+            )
+            return records
+        except Exception as e:
+            logger.warning("Failed to load existing Parquet: %s", e)
+            return []
+
+    @staticmethod
+    def _merge_records(
+        existing: list[dict], new: list[dict]
+    ) -> list[dict]:
+        """Merge existing and new records, deduplicating by arxiv_id.
+
+        New records take precedence over existing ones if there are duplicates.
+
+        Args:
+            existing: Records from previous runs.
+            new: Records from the current run.
+
+        Returns:
+            Combined list with no duplicate arxiv_ids.
+        """
+        new_ids = {r["arxiv_id"] for r in new}
+        deduplicated_existing = [r for r in existing if r["arxiv_id"] not in new_ids]
+        return deduplicated_existing + new
 
     def _load_progress(self) -> None:
         """Load progress from the progress tracking file."""
