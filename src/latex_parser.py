@@ -318,16 +318,16 @@ class LatexParser:
         return []
 
     def _clean_latex(self, text: str) -> str:
-        """Convert LaTeX markup to plain text.
+        """Convert LaTeX markup to clean plain text suitable for NLP.
 
-        Uses pylatexenc for robust conversion, with regex fallbacks for
-        commands that pylatexenc doesn't handle well.
+        Uses pylatexenc for initial conversion, then applies aggressive
+        regex-based cleanup to strip all remaining LaTeX constructs.
 
         Args:
             text: LaTeX text to clean.
 
         Returns:
-            Plain text with LaTeX commands removed.
+            Plain text with all LaTeX commands, environments, and markup removed.
         """
         try:
             # First pass: pylatexenc
@@ -336,18 +336,94 @@ class LatexParser:
             # Fallback: manual regex stripping
             cleaned = text
 
-        # Additional cleanup
-        # Remove remaining commands like \cite{}, \ref{}, \label{}
-        cleaned = re.sub(r"\\(?:cite|ref|label|eqref|autoref)\{[^}]*\}", "", cleaned)
-        # Remove \textbf{}, \textit{}, \emph{} but keep content
-        cleaned = re.sub(r"\\(?:textbf|textit|emph|textsc|textrm)\{([^}]*)\}", r"\1", cleaned)
-        # Remove math environments but keep content
-        cleaned = re.sub(r"\$([^$]+)\$", r"\1", cleaned)
-        # Remove remaining backslash commands
-        cleaned = re.sub(r"\\[a-zA-Z]+\*?(?:\{[^}]*\})?", "", cleaned)
-        # Clean up extra whitespace
+        # --- Remove entire environments that don't contain useful prose ---
+
+        # Remove figure and table environments entirely (captions, labels, etc.)
+        cleaned = re.sub(
+            r"\\begin\{(?:figure|table)\*?\}.*?\\end\{(?:figure|table)\*?\}",
+            "", cleaned, flags=re.DOTALL,
+        )
+        # Remove tabular environments
+        cleaned = re.sub(
+            r"\\begin\{(?:tabular|tabularx|longtable)\}.*?\\end\{(?:tabular|tabularx|longtable)\}",
+            "", cleaned, flags=re.DOTALL,
+        )
+        # Remove math environments (equation, align, gather, multline, eqnarray, math, displaymath)
+        cleaned = re.sub(
+            r"\\begin\{(?:equation|align|gather|multline|eqnarray|math|displaymath)\*?\}"
+            r".*?"
+            r"\\end\{(?:equation|align|gather|multline|eqnarray|math|displaymath)\*?\}",
+            "", cleaned, flags=re.DOTALL,
+        )
+        # Remove display math: \[...\] and $$...$$
+        cleaned = re.sub(r"\\\[.*?\\\]", "", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r"\$\$.*?\$\$", "", cleaned, flags=re.DOTALL)
+        # Remove inline math \(...\)
+        cleaned = re.sub(r"\\\(.*?\\\)", "", cleaned, flags=re.DOTALL)
+        # Remove inline math $...$
+        cleaned = re.sub(r"\$[^$]+\$", "", cleaned)
+
+        # --- Remove commands but keep content where appropriate ---
+
+        # Remove citation commands: \cite{}, \citep{}, \citet{}, \citeauthor{}, etc.
+        cleaned = re.sub(r"\\cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{[^}]*\}", "", cleaned)
+        # Remove \ref{}, \label{}, \eqref{}, \autoref{}, \pageref{}
+        cleaned = re.sub(r"\\(?:ref|label|eqref|autoref|pageref|nameref)\{[^}]*\}", "", cleaned)
+        # Remove \caption{...}
+        cleaned = re.sub(r"\\caption\*?(?:\[[^\]]*\])?\{[^}]*\}", "", cleaned)
+
+        # \footnote{content} → keep content
+        cleaned = re.sub(r"\\footnote\{([^}]*)\}", r"\1", cleaned)
+        # \href{url}{text} → keep text
+        cleaned = re.sub(r"\\href\{[^}]*\}\{([^}]*)\}", r"\1", cleaned)
+        # \url{...} → remove
+        cleaned = re.sub(r"\\url\{[^}]*\}", "", cleaned)
+        # \textbf{}, \textit{}, \emph{}, etc. → keep content
+        cleaned = re.sub(
+            r"\\(?:textbf|textit|emph|textsc|textrm|texttt|textsf|textsl|underline|mbox)\{([^}]*)\}",
+            r"\1", cleaned,
+        )
+
+        # Remove remaining \begin{...}...\end{...} wrappers but keep content
+        cleaned = re.sub(r"\\begin\{[^}]*\}", "", cleaned)
+        cleaned = re.sub(r"\\end\{[^}]*\}", "", cleaned)
+
+        # Remove \item markers
+        cleaned = re.sub(r"\\item\s*(?:\[[^\]]*\])?", "", cleaned)
+
+        # Remove remaining backslash commands (e.g. \par, \noindent, \vspace, etc.)
+        cleaned = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])*(?:\{[^}]*\})*", "", cleaned)
+
+        # --- Clean up LaTeX special characters ---
+
+        # Escaped special chars: \%, \&, \#, \_, \$ → literal char
+        cleaned = re.sub(r"\\([%&#_$])", r"\1", cleaned)
+        # Tilde (non-breaking space) → regular space
+        cleaned = cleaned.replace("~", " ")
+        # Em-dash and en-dash
+        cleaned = cleaned.replace("---", "\u2014")
+        cleaned = cleaned.replace("--", "\u2013")
+        # Remove leftover curly braces
+        cleaned = re.sub(r"[{}]", "", cleaned)
+        # Remove leftover backslashes
+        cleaned = re.sub(r"\\", "", cleaned)
+
+        # --- Citation text cleanup for NLP ---
+
+        # Remove "et al." / "et al" patterns (common in related work prose)
+        cleaned = re.sub(r"\bet\s+al\b\.?", "", cleaned)
+        # Remove orphaned reference markers like [12], [1, 2, 3], (2023), [Smith, 2020]
+        cleaned = re.sub(r"\[\s*[\d,;\s]+\s*\]", "", cleaned)
+        cleaned = re.sub(r"\(\s*\d{4}\s*\)", "", cleaned)
+
+        # --- Final whitespace normalization ---
+
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r"[ \t]+", " ", cleaned)
+        # Clean up spaces before punctuation
+        cleaned = re.sub(r"\s+([.,;:!?])", r"\1", cleaned)
+        # Clean up multiple consecutive punctuation
+        cleaned = re.sub(r"([.,;])\s*\1+", r"\1", cleaned)
 
         return cleaned.strip()
 

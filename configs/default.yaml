@@ -57,7 +57,7 @@ classification:
 # Output settings
 output:
   # Output file path
-  path: "./output/arxiv_cs_sections.parquet"
+  path: "./output/arxiv_cs_related_works.parquet"
   # Parquet compression
   compression: "snappy"
   # Write intermediate checkpoints every N papers

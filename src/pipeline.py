@@ -118,14 +118,10 @@ def _build_paper_record(
         primary_category=metadata.primary_category,
         published=metadata.published,
         updated=metadata.updated,
-        abstract=section_map.get(SectionType.ABSTRACT, _empty_section()).content
-        or metadata.abstract,
-        introduction=section_map.get(SectionType.INTRODUCTION, _empty_section()).content,
-        method=section_map.get(SectionType.METHOD, _empty_section()).content,
-        results=section_map.get(SectionType.RESULTS, _empty_section()).content,
-        conclusion=section_map.get(SectionType.CONCLUSION, _empty_section()).content,
+        abstract=metadata.abstract,
+        related_work=section_map.get(SectionType.RELATED_WORK, _empty_section()).content,
         extraction_method=extraction_method.value,
-        extraction_success=len(found_types) >= 3,
+        extraction_success=SectionType.RELATED_WORK in section_map,
         sections_found=", ".join(found_types),
         raw_section_count=raw_count,
     )
@@ -195,7 +191,7 @@ class Pipeline:
         self.progress_file = Path(proc_config.get("progress_file", "./data/progress.json"))
 
         out_config = config.get("output", {})
-        self.output_path = Path(out_config.get("path", "./output/arxiv_cs_sections.parquet"))
+        self.output_path = Path(out_config.get("path", "./output/arxiv_cs_related_works.parquet"))
         self.compression = out_config.get("compression", "snappy")
         self.checkpoint_interval = out_config.get("checkpoint_interval", 1000)
         self.txt_export = out_config.get("txt_export", False)
