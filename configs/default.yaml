@@ -23,10 +23,6 @@ download:
   # Probe source availability via HEAD requests before downloading
   # Filters out papers without LaTeX source, saving bandwidth and time
   probe_source_availability: true
-  # Use ArXiv S3 bucket (requires AWS credentials, much faster for bulk)
-  use_s3: false
-  # S3 bucket name (requester-pays)
-  s3_bucket: "arxiv"
   # Retry settings
   max_retries: 3
   retry_delay: 10.0
@@ -51,13 +47,11 @@ classification:
     max_tokens: 1024
     # Max papers to send to LLM (cost control)
     max_llm_calls: 10000
-    # Batch size for LLM requests
-    batch_size: 50
 
 # Output settings
 output:
   # Output file path
-  path: "./output/arxiv_cs_sections.parquet"
+  path: "./output/arxiv_cs_related_works.parquet"
   # Parquet compression
   compression: "snappy"
   # Write intermediate checkpoints every N papers
@@ -75,5 +69,8 @@ processing:
   log_level: "INFO"
   # Resume from checkpoint if available
   resume: true
+  # Max papers to process per run (0 = unlimited)
+  # Useful for incremental runs: pass full metadata, process N at a time
+  max_papers_per_run: 1000
   # Progress tracking file
   progress_file: "./data/progress.json"

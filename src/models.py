@@ -14,96 +14,43 @@ from typing import Optional
 class SectionType(str, Enum):
     """Standardized section types for classification.
 
-    These represent the canonical sections that papers are mapped to.
-    Papers may use different headings, but they are normalized to these types.
+    The pipeline focuses exclusively on extracting "Related Works" sections
+    from papers. All other sections are classified as OTHER.
     """
 
-    ABSTRACT = "abstract"
-    INTRODUCTION = "introduction"
-    METHOD = "method"
-    RESULTS = "results"
-    CONCLUSION = "conclusion"
+    RELATED_WORK = "related_work"
     OTHER = "other"
 
     @classmethod
     def from_heading(cls, heading: str) -> SectionType:
-        """Attempt to classify a section heading into a standard type.
+        """Attempt to classify a section heading as related work.
 
-        Uses keyword matching as a first-pass heuristic. Handles common
-        variations like 'methodology', 'experimental setup', 'findings', etc.
+        Uses keyword matching as a first-pass heuristic for detecting
+        related work sections under their many common headings.
 
         Args:
             heading: The raw section heading text from the paper.
 
         Returns:
-            The matched SectionType, or SectionType.OTHER if no match.
+            SectionType.RELATED_WORK if matched, SectionType.OTHER otherwise.
         """
         heading_lower = heading.lower().strip()
 
-        abstract_keywords = {"abstract"}
-        intro_keywords = {
-            "introduction",
-            "background",
-            "motivation",
-            "overview",
-            "preliminaries",
-            "preliminary",
-        }
-        method_keywords = {
-            "method",
-            "methodology",
-            "approach",
-            "framework",
-            "model",
-            "architecture",
-            "system",
-            "proposed",
-            "design",
-            "implementation",
-            "experimental setup",
-            "setup",
-            "formulation",
-            "problem formulation",
-            "technique",
-        }
-        results_keywords = {
-            "result",
-            "experiment",
-            "evaluation",
-            "finding",
-            "analysis",
-            "empirical",
-            "performance",
-            "comparison",
-            "benchmark",
-            "ablation",
-            "discussion",
-        }
-        conclusion_keywords = {
-            "conclusion",
-            "summary",
-            "future work",
-            "concluding",
-            "limitations",
-            "limitation",
-            "broader impact",
+        related_work_keywords = {
+            "related work",
+            "related works",
+            "literature review",
+            "prior work",
+            "previous work",
+            "related research",
+            "state of the art",
+            "related literature",
+            "survey of related",
         }
 
-        for keyword in abstract_keywords:
+        for keyword in related_work_keywords:
             if keyword in heading_lower:
-                return cls.ABSTRACT
-        for keyword in intro_keywords:
-            if keyword in heading_lower:
-                return cls.INTRODUCTION
-        for keyword in method_keywords:
-            if keyword in heading_lower:
-                return cls.METHOD
-        for keyword in results_keywords:
-            if keyword in heading_lower:
-                return cls.RESULTS
-        for keyword in conclusion_keywords:
-            if keyword in heading_lower:
-                return cls.CONCLUSION
+                return cls.RELATED_WORK
 
         return cls.OTHER
 
@@ -204,12 +151,9 @@ class PaperRecord:
         published: Publication date.
         updated: Last update date.
         abstract: Abstract text.
-        introduction: Introduction text (empty string if not found).
-        method: Method/approach section text.
-        results: Results/experiments section text.
-        conclusion: Conclusion text.
+        related_work: Related works section text (empty string if not found).
         extraction_method: How the paper was processed.
-        extraction_success: Whether all standard sections were found.
+        extraction_success: Whether the related work section was found.
         sections_found: Comma-separated list of sections that were extracted.
         raw_section_count: Total number of sections in the original paper.
     """
@@ -222,10 +166,7 @@ class PaperRecord:
     published: str
     updated: str
     abstract: str
-    introduction: str = ""
-    method: str = ""
-    results: str = ""
-    conclusion: str = ""
+    related_work: str = ""
     extraction_method: str = ""
     extraction_success: bool = False
     sections_found: str = ""

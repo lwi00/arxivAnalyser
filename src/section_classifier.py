@@ -1,17 +1,13 @@
 """Section classifier: maps raw sections to standard types.
 
-This module classifies extracted sections (from LaTeX or PDF) into the
-standard categories: abstract, introduction, method, results, conclusion.
+This module classifies extracted sections into either "related_work" or "other".
+The pipeline focuses exclusively on extracting Related Works sections from papers.
 
 Classification strategy (in priority order):
 1. **Exact heuristic match** — direct keyword matching on headings.
-   Handles ~80% of CS papers with high confidence.
-2. **Fuzzy heuristic match** — looser keyword matching and content-based
-   heuristics for non-standard headings.
+2. **Fuzzy heuristic match** — looser keyword matching for non-standard headings.
 3. **LLM fallback** — sends ambiguous sections to Claude for classification.
    Used only when heuristics fail and `use_llm_fallback=True`.
-
-The goal is to minimize LLM calls (for cost) while maximizing accuracy.
 
 Typical usage:
     ```python
@@ -24,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Optional
 
 from src.models import (
@@ -35,67 +32,33 @@ from src.models import (
 
 logger = logging.getLogger(__name__)
 
-# Extended keyword mappings for fuzzy matching
+# Keyword mappings for fuzzy matching of related work sections
 # Each entry is (keywords_in_heading, section_type, confidence)
 FUZZY_RULES: list[tuple[list[str], SectionType, float]] = [
-    # Abstract
-    (["abstract"], SectionType.ABSTRACT, 1.0),
-    # Introduction
-    (["introduction"], SectionType.INTRODUCTION, 1.0),
-    (["background"], SectionType.INTRODUCTION, 0.8),
-    (["motivation"], SectionType.INTRODUCTION, 0.8),
-    (["overview"], SectionType.INTRODUCTION, 0.7),
-    (["preliminaries", "preliminary"], SectionType.INTRODUCTION, 0.7),
-    (["related work"], SectionType.INTRODUCTION, 0.7),
-    # Method
-    (["method"], SectionType.METHOD, 1.0),
-    (["methodology"], SectionType.METHOD, 1.0),
-    (["approach"], SectionType.METHOD, 0.9),
-    (["proposed"], SectionType.METHOD, 0.9),
-    (["framework"], SectionType.METHOD, 0.85),
-    (["architecture"], SectionType.METHOD, 0.85),
-    (["model"], SectionType.METHOD, 0.7),
-    (["system"], SectionType.METHOD, 0.7),
-    (["design"], SectionType.METHOD, 0.7),
-    (["implementation"], SectionType.METHOD, 0.8),
-    (["formulation"], SectionType.METHOD, 0.85),
-    (["algorithm"], SectionType.METHOD, 0.8),
-    (["technique"], SectionType.METHOD, 0.8),
-    (["setup"], SectionType.METHOD, 0.7),
-    (["training"], SectionType.METHOD, 0.7),
-    # Results
-    (["result"], SectionType.RESULTS, 1.0),
-    (["experiment"], SectionType.RESULTS, 0.95),
-    (["evaluation"], SectionType.RESULTS, 0.95),
-    (["empirical"], SectionType.RESULTS, 0.9),
-    (["benchmark"], SectionType.RESULTS, 0.85),
-    (["performance"], SectionType.RESULTS, 0.8),
-    (["comparison"], SectionType.RESULTS, 0.8),
-    (["ablation"], SectionType.RESULTS, 0.9),
-    (["analysis"], SectionType.RESULTS, 0.7),
-    (["finding"], SectionType.RESULTS, 0.85),
-    # Conclusion
-    (["conclusion"], SectionType.CONCLUSION, 1.0),
-    (["concluding"], SectionType.CONCLUSION, 0.95),
-    (["summary"], SectionType.CONCLUSION, 0.8),
-    (["future work"], SectionType.CONCLUSION, 0.85),
-    (["limitation"], SectionType.CONCLUSION, 0.8),
-    (["broader impact"], SectionType.CONCLUSION, 0.75),
-    (["discussion"], SectionType.RESULTS, 0.6),  # Could be results or conclusion
+    # High confidence — exact or near-exact matches
+    (["related work"], SectionType.RELATED_WORK, 1.0),
+    (["related works"], SectionType.RELATED_WORK, 1.0),
+    (["literature review"], SectionType.RELATED_WORK, 1.0),
+    (["prior work"], SectionType.RELATED_WORK, 0.95),
+    (["previous work"], SectionType.RELATED_WORK, 0.95),
+    (["related research"], SectionType.RELATED_WORK, 0.95),
+    (["state of the art"], SectionType.RELATED_WORK, 0.9),
+    (["related literature"], SectionType.RELATED_WORK, 0.9),
+    (["survey of related"], SectionType.RELATED_WORK, 0.9),
+    # Medium confidence — could be related work
+    (["background and related"], SectionType.RELATED_WORK, 0.85),
+    (["related studies"], SectionType.RELATED_WORK, 0.85),
+    (["existing work"], SectionType.RELATED_WORK, 0.8),
+    (["existing approaches"], SectionType.RELATED_WORK, 0.8),
+    (["prior art"], SectionType.RELATED_WORK, 0.8),
 ]
 
 # LLM classification prompt template
-LLM_CLASSIFICATION_PROMPT = """You are classifying sections of academic computer science papers into standard categories.
+LLM_CLASSIFICATION_PROMPT = """You are classifying sections of academic computer science papers.
 
-Given the following section heading and the first 500 characters of its content, classify it into exactly ONE of these categories:
-- abstract
-- introduction  
-- method
-- results
-- conclusion
-- other
+Given the following section heading and the first 500 characters of its content, determine if this is a "Related Works" section (covering prior work, literature review, related research, etc.) or not.
 
-Respond with ONLY a JSON object: {{"section_type": "<category>", "confidence": <0.0-1.0>}}
+Respond with ONLY a JSON object: {{"section_type": "<related_work|other>", "confidence": <0.0-1.0>}}
 
 Section heading: "{heading}"
 Content preview: "{content_preview}"
@@ -103,7 +66,7 @@ Content preview: "{content_preview}"
 
 
 class SectionClassifier:
-    """Classifies raw paper sections into standard categories.
+    """Classifies raw paper sections into related_work or other.
 
     Uses a cascading approach: fast heuristics first, expensive LLM calls
     only when needed.
@@ -245,9 +208,8 @@ class SectionClassifier:
             Tuple of (SectionType, confidence) if matched, None otherwise.
         """
         heading_lower = heading.lower().strip()
-        # Remove numbering prefixes like "3.", "III.", "3.1"
-        heading_clean = heading_lower
-        heading_clean = heading_clean.lstrip("0123456789ivx.")
+        # Remove numbering prefixes like "3.", "3.1", "III.", "iv."
+        heading_clean = re.sub(r'^(?:\d[\d.]*|[ivx]+\.)\s*', '', heading_lower)
         heading_clean = heading_clean.strip()
 
         best_match: Optional[tuple[SectionType, float]] = None
@@ -290,7 +252,15 @@ class SectionClassifier:
             response_text = response.content[0].text.strip()
 
             # Parse JSON response
-            result = json.loads(response_text)
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "LLM returned invalid JSON for '%s': %s",
+                    section.heading,
+                    response_text[:200],
+                )
+                return (SectionType.OTHER, 0.1)
             section_type_str = result.get("section_type", "other")
             confidence = float(result.get("confidence", 0.5))
 
@@ -318,7 +288,7 @@ class SectionClassifier:
     ) -> list[ClassifiedSection]:
         """Merge multiple sections of the same type.
 
-        Some papers split a single logical section (e.g., 'Method') across
+        Some papers split a single logical section (e.g., 'Related Work') across
         multiple LaTeX \\section{} commands. This merges them.
 
         Args:
