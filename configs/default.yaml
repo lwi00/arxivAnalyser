@@ -60,6 +60,10 @@ output:
   txt_export: true
   # Directory for .txt output files
   txt_dir: "./data/txt"
+  # Only write related works sections as .txt (skip other sections)
+  txt_related_only: true
+  # Skip Parquet output entirely — only produce .txt files
+  txt_only_mode: false
 
 # Processing settings
 processing:

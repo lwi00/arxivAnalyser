@@ -23,6 +23,7 @@ Typical usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -48,7 +49,7 @@ from src.models import (
     SectionType,
 )
 from src.section_classifier import SectionClassifier
-from src.tex_to_txt import convert_tex_to_txt
+from src.tex_to_txt import _sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,18 @@ def _process_single_paper_worker(args: tuple) -> Optional[dict]:
 
     # Build record
     record = _build_paper_record(metadata, classified, extraction_method, len(raw_sections))
-    return asdict(record)
+    result = asdict(record)
+    # Attach classified sections for txt export (avoids re-parsing)
+    result["_sections"] = [
+        {
+            "heading": s.original_heading,
+            "content": s.content,
+            "section_type": s.section_type.value,
+            "order": i,
+        }
+        for i, s in enumerate(classified)
+    ]
+    return result
 
 
 def _build_paper_record(
@@ -197,6 +209,8 @@ class Pipeline:
         self.checkpoint_interval = out_config.get("checkpoint_interval", 1000)
         self.txt_export = out_config.get("txt_export", False)
         self.txt_dir = Path(out_config.get("txt_dir", "./data/txt"))
+        self.txt_related_only = out_config.get("txt_related_only", False)
+        self.txt_only_mode = out_config.get("txt_only_mode", False)
 
         self.progress: dict[str, str] = {}
         if self.resume:
@@ -261,50 +275,65 @@ class Pipeline:
         if self.config.get("download", {}).get("probe_source_availability", True):
             pending = self._filter_latex_available(pending)
 
-        # Load existing records from previous runs
-        existing_records = self._load_existing_records()
-
         # Process in batches
-        new_records: list[dict] = []
         batch_size = self.checkpoint_interval
         total_batches = (len(pending) + batch_size - 1) // batch_size
 
-        for batch_idx in range(total_batches):
-            batch_start = batch_idx * batch_size
-            batch_end = min((batch_idx + 1) * batch_size, len(pending))
-            batch = pending[batch_start:batch_end]
+        if self.txt_only_mode:
+            # Fast path: only produce .txt files, skip Parquet entirely
+            self.txt_export = True
+            for batch_idx in range(total_batches):
+                batch_start = batch_idx * batch_size
+                batch_end = min((batch_idx + 1) * batch_size, len(pending))
+                batch = pending[batch_start:batch_end]
+                logger.info(
+                    "Processing batch %d/%d (%d papers) [txt-only mode]",
+                    batch_idx + 1, total_batches, len(batch),
+                )
+                self._process_batch(batch)
 
+            elapsed = time.time() - start_time
             logger.info(
-                "Processing batch %d/%d (%d papers)",
-                batch_idx + 1,
-                total_batches,
-                len(batch),
+                "Pipeline complete (txt-only). %d papers processed in %.1f seconds. Output: %s",
+                len(pending), elapsed, self.txt_dir,
             )
+            return self.txt_dir
+        else:
+            # Full pipeline: Parquet output with optional txt export
+            existing_records = self._load_existing_records()
+            new_records: list[dict] = []
 
-            batch_records = self._process_batch(batch)
-            new_records.extend(batch_records)
+            for batch_idx in range(total_batches):
+                batch_start = batch_idx * batch_size
+                batch_end = min((batch_idx + 1) * batch_size, len(pending))
+                batch = pending[batch_start:batch_end]
 
-            # Write checkpoint (existing + new)
-            self._write_checkpoint(existing_records + new_records)
+                logger.info(
+                    "Processing batch %d/%d (%d papers)",
+                    batch_idx + 1, total_batches, len(batch),
+                )
+
+                batch_records = self._process_batch(batch)
+                new_records.extend(batch_records)
+
+                # Write checkpoint (existing + new)
+                self._write_checkpoint(existing_records + new_records)
+                logger.info(
+                    "Checkpoint saved. %d new records this run, %d total",
+                    len(new_records),
+                    len(existing_records) + len(new_records),
+                )
+
+            # Final output: merge existing + new, deduplicate by arxiv_id
+            all_records = self._merge_records(existing_records, new_records)
+            output_path = self._write_parquet(all_records)
+
+            elapsed = time.time() - start_time
             logger.info(
-                "Checkpoint saved. %d new records this run, %d total",
-                len(new_records),
-                len(existing_records) + len(new_records),
+                "Pipeline complete. %d new + %d existing = %d total records in %.1f seconds",
+                len(new_records), len(existing_records), len(all_records), elapsed,
             )
-
-        # Final output: merge existing + new, deduplicate by arxiv_id
-        all_records = self._merge_records(existing_records, new_records)
-        output_path = self._write_parquet(all_records)
-
-        elapsed = time.time() - start_time
-        logger.info(
-            "Pipeline complete. %d new + %d existing = %d total records in %.1f seconds",
-            len(new_records),
-            len(existing_records),
-            len(all_records),
-            elapsed,
-        )
-        return output_path
+            return output_path
 
     def _filter_latex_available(
         self, papers: list[PaperMetadata]
@@ -324,8 +353,6 @@ class Pipeline:
         Returns:
             Filtered list containing only papers with LaTeX source.
         """
-        import asyncio
-
         logger.info(
             "Probing source availability for %d papers (HEAD requests)...",
             len(papers),
@@ -388,26 +415,15 @@ class Pipeline:
         """
         records = []
 
-        # Step 1: Download LaTeX sources
-        source_paths: dict[str, Optional[Path]] = {}
-
-        for metadata in tqdm(batch, desc="Downloading sources", unit="paper"):
-            source_path = self.downloader.download_source(metadata.arxiv_id)
-            source_paths[metadata.arxiv_id] = source_path
-            if source_path is None:
-                self.progress[metadata.arxiv_id] = ProcessingStatus.FAILED_DOWNLOAD.value
-
-        # Step 1.5: Optional .txt export
-        if self.txt_export:
-            latex_config = self.config.get("latex", {})
-            max_file_size = latex_config.get("max_file_size", 10_000_000)
-            for metadata in batch:
-                src = source_paths.get(metadata.arxiv_id)
-                if src is not None:
-                    try:
-                        convert_tex_to_txt(src, self.txt_dir, metadata.arxiv_id, max_file_size)
-                    except Exception as e:
-                        logger.warning("txt export failed for %s: %s", metadata.arxiv_id, e)
+        # Step 1: Download LaTeX sources (async batch for concurrency)
+        arxiv_ids = [m.arxiv_id for m in batch]
+        logger.info("Downloading %d sources (async, concurrency=%d)...", len(arxiv_ids), self.downloader.max_concurrent)
+        source_paths: dict[str, Optional[Path]] = asyncio.run(
+            self.downloader.batch_download_sources(arxiv_ids)
+        )
+        for aid, path in source_paths.items():
+            if path is None:
+                self.progress[aid] = ProcessingStatus.FAILED_DOWNLOAD.value
 
         # Step 2: Process papers in parallel
         worker_args = []
@@ -445,6 +461,16 @@ class Pipeline:
                 except Exception as e:
                     logger.warning("Worker failed for %s: %s", arxiv_id, e)
                     self.progress[arxiv_id] = ProcessingStatus.FAILED_PARSE.value
+
+        # Step 3: Optional .txt export (reuses sections from workers, no re-parsing)
+        if self.txt_export:
+            for record in records:
+                sections = record.pop("_sections", [])
+                if sections:
+                    try:
+                        self._write_txt_sections(record["arxiv_id"], sections)
+                    except Exception as e:
+                        logger.warning("txt export failed for %s: %s", record["arxiv_id"], e)
 
         self._save_progress()
         return records
@@ -541,3 +567,23 @@ class Pipeline:
         self.progress_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.progress_file, "w") as f:
             json.dump(self.progress, f)
+
+    def _write_txt_sections(self, arxiv_id: str, sections: list[dict]) -> None:
+        """Write classified sections as .txt files for a single paper.
+
+        Uses sections already parsed by workers — no re-parsing needed.
+
+        Args:
+            arxiv_id: ArXiv identifier for the paper.
+            sections: List of section dicts with heading, content, section_type, order.
+        """
+        if self.txt_related_only:
+            sections = [s for s in sections if s.get("section_type") == "related_work"]
+        if not sections:
+            return
+
+        paper_dir = self.txt_dir / arxiv_id
+        paper_dir.mkdir(parents=True, exist_ok=True)
+        for section in sections:
+            filename = f"{section['order']:02d}_{_sanitize_filename(section['heading'])}.txt"
+            (paper_dir / filename).write_text(section["content"], encoding="utf-8")
