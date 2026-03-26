@@ -1,6 +1,6 @@
-# ArXiv Section Extractor
+# ArXiv Related Works Extractor
 
-Large-scale extraction of structured sections (abstract, introduction, method, results, conclusion) from ArXiv CS papers (2022–2025) into a Parquet dataset.
+Large-scale extraction of Related Works sections from ArXiv CS papers (2022–2025) into a Parquet dataset.
 
 ## Quickstart
 

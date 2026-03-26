@@ -23,10 +23,6 @@ download:
   # Probe source availability via HEAD requests before downloading
   # Filters out papers without LaTeX source, saving bandwidth and time
   probe_source_availability: true
-  # Use ArXiv S3 bucket (requires AWS credentials, much faster for bulk)
-  use_s3: false
-  # S3 bucket name (requester-pays)
-  s3_bucket: "arxiv"
   # Retry settings
   max_retries: 3
   retry_delay: 10.0
@@ -51,8 +47,6 @@ classification:
     max_tokens: 1024
     # Max papers to send to LLM (cost control)
     max_llm_calls: 10000
-    # Batch size for LLM requests
-    batch_size: 50
 
 # Output settings
 output:

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Optional
 
 from src.models import (
@@ -207,9 +208,8 @@ class SectionClassifier:
             Tuple of (SectionType, confidence) if matched, None otherwise.
         """
         heading_lower = heading.lower().strip()
-        # Remove numbering prefixes like "3.", "III.", "3.1"
-        heading_clean = heading_lower
-        heading_clean = heading_clean.lstrip("0123456789ivx.")
+        # Remove numbering prefixes like "3.", "3.1", "III.", "iv."
+        heading_clean = re.sub(r'^(?:\d[\d.]*|[ivx]+\.)\s*', '', heading_lower)
         heading_clean = heading_clean.strip()
 
         best_match: Optional[tuple[SectionType, float]] = None
@@ -252,7 +252,15 @@ class SectionClassifier:
             response_text = response.content[0].text.strip()
 
             # Parse JSON response
-            result = json.loads(response_text)
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                logger.warning(
+                    "LLM returned invalid JSON for '%s': %s",
+                    section.heading,
+                    response_text[:200],
+                )
+                return (SectionType.OTHER, 0.1)
             section_type_str = result.get("section_type", "other")
             confidence = float(result.get("confidence", 0.5))
 
