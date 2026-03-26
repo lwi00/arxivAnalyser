@@ -55,6 +55,10 @@ def cmd_run(args: argparse.Namespace) -> None:
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
+    if args.batch > 0:
+        config.setdefault("processing", {})
+        config["processing"]["max_papers_per_run"] = args.batch
+
     setup_logging(config.get("processing", {}).get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
 
@@ -206,6 +210,9 @@ def cmd_related_works(args: argparse.Namespace) -> None:
     config["output"]["txt_only_mode"] = True
     config.setdefault("classification", {})
     config["classification"]["use_llm_fallback"] = False
+    if args.batch > 0:
+        config.setdefault("processing", {})
+        config["processing"]["max_papers_per_run"] = args.batch
 
     setup_logging(config.get("processing", {}).get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
@@ -293,6 +300,10 @@ def main() -> None:
     run_parser.add_argument(
         "--kaggle-json", default=None, help="Path to Kaggle ArXiv JSON for metadata"
     )
+    run_parser.add_argument(
+        "--batch", type=int, default=0,
+        help="Max papers to process (0 = unlimited, default: 0)",
+    )
 
     # Single paper command
     single_parser = subparsers.add_parser("single", help="Process a single paper")
@@ -321,6 +332,10 @@ def main() -> None:
     )
     rw_parser.add_argument(
         "--kaggle-json", default=None, help="Path to Kaggle ArXiv JSON for metadata"
+    )
+    rw_parser.add_argument(
+        "--batch", type=int, default=0,
+        help="Max papers to process (0 = unlimited, default: 0)",
     )
 
     # Metadata command
