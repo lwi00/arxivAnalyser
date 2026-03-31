@@ -212,6 +212,9 @@ class Pipeline:
         self.txt_related_only = out_config.get("txt_related_only", False)
         self.txt_only_mode = out_config.get("txt_only_mode", False)
 
+        self.filter_date_start: Optional[str] = proc_config.get("filter_date_start")
+        self.filter_date_end: Optional[str] = proc_config.get("filter_date_end")
+
         self.progress: dict[str, str] = {}
         if self.resume:
             self._load_progress()
@@ -261,6 +264,10 @@ class Pipeline:
             )
         else:
             pending = metadata_list
+
+        # Apply date filter (if configured)
+        if self.filter_date_start or self.filter_date_end:
+            pending = self._filter_by_date(pending)
 
         # Apply per-run paper limit
         if self.max_papers_per_run > 0 and len(pending) > self.max_papers_per_run:
@@ -334,6 +341,38 @@ class Pipeline:
                 len(new_records), len(existing_records), len(all_records), elapsed,
             )
             return output_path
+
+    def _filter_by_date(
+        self, papers: list[PaperMetadata]
+    ) -> list[PaperMetadata]:
+        """Filter papers by publication date range.
+
+        Uses the ``published`` field (ISO format string) for comparison.
+        Only papers whose publication date falls within the configured
+        ``filter_date_start`` / ``filter_date_end`` range are kept.
+
+        Args:
+            papers: List of paper metadata to filter.
+
+        Returns:
+            Filtered list containing only papers within the date range.
+        """
+        before = len(papers)
+        filtered = papers
+        if self.filter_date_start:
+            filtered = [p for p in filtered if p.published[:10] >= self.filter_date_start]
+        if self.filter_date_end:
+            filtered = [p for p in filtered if p.published[:10] <= self.filter_date_end]
+
+        logger.info(
+            "Date filter [%s .. %s]: %d → %d papers (%d filtered out)",
+            self.filter_date_start or "*",
+            self.filter_date_end or "*",
+            before,
+            len(filtered),
+            before - len(filtered),
+        )
+        return filtered
 
     def _filter_latex_available(
         self, papers: list[PaperMetadata]
