@@ -5,7 +5,7 @@ __pycache__/
 *.lock
 # C extensions
 *.so
-
+data/
 # Distribution / packaging
 .Python
 build/

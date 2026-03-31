@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -251,11 +251,13 @@ class Pipeline:
         logger.info("Starting pipeline for %d papers", len(metadata_list))
         start_time = time.time()
 
-        # Filter out all previously attempted papers (completed, failed, or no_latex_source)
+        # Filter out completed/failed papers; keep untracked and 'downloaded' (source exists, not yet parsed)
+        _resumable = {ProcessingStatus.DOWNLOADED.value, ProcessingStatus.PENDING.value}
         if self.resume:
             pending = [
                 m for m in metadata_list
                 if m.arxiv_id not in self.progress
+                or self.progress[m.arxiv_id] in _resumable
             ]
             logger.info(
                 "Resuming: %d already attempted, %d new",
@@ -289,15 +291,20 @@ class Pipeline:
         if self.txt_only_mode:
             # Fast path: only produce .txt files, skip Parquet entirely
             self.txt_export = True
-            for batch_idx in range(total_batches):
-                batch_start = batch_idx * batch_size
-                batch_end = min((batch_idx + 1) * batch_size, len(pending))
-                batch = pending[batch_start:batch_end]
-                logger.info(
-                    "Processing batch %d/%d (%d papers) [txt-only mode]",
-                    batch_idx + 1, total_batches, len(batch),
-                )
-                self._process_batch(batch)
+            try:
+                for batch_idx in range(total_batches):
+                    batch_start = batch_idx * batch_size
+                    batch_end = min((batch_idx + 1) * batch_size, len(pending))
+                    batch = pending[batch_start:batch_end]
+                    logger.info(
+                        "Processing batch %d/%d (%d papers) [txt-only mode]",
+                        batch_idx + 1, total_batches, len(batch),
+                    )
+                    self._process_batch(batch)
+            except (KeyboardInterrupt, SystemExit):
+                logger.warning("Pipeline interrupted, saving progress...")
+                self._save_progress()
+                raise
 
             elapsed = time.time() - start_time
             logger.info(
@@ -310,26 +317,33 @@ class Pipeline:
             existing_records = self._load_existing_records()
             new_records: list[dict] = []
 
-            for batch_idx in range(total_batches):
-                batch_start = batch_idx * batch_size
-                batch_end = min((batch_idx + 1) * batch_size, len(pending))
-                batch = pending[batch_start:batch_end]
+            try:
+                for batch_idx in range(total_batches):
+                    batch_start = batch_idx * batch_size
+                    batch_end = min((batch_idx + 1) * batch_size, len(pending))
+                    batch = pending[batch_start:batch_end]
 
-                logger.info(
-                    "Processing batch %d/%d (%d papers)",
-                    batch_idx + 1, total_batches, len(batch),
-                )
+                    logger.info(
+                        "Processing batch %d/%d (%d papers)",
+                        batch_idx + 1, total_batches, len(batch),
+                    )
 
-                batch_records = self._process_batch(batch)
-                new_records.extend(batch_records)
+                    batch_records = self._process_batch(batch)
+                    new_records.extend(batch_records)
 
-                # Write checkpoint (existing + new)
-                self._write_checkpoint(existing_records + new_records)
-                logger.info(
-                    "Checkpoint saved. %d new records this run, %d total",
-                    len(new_records),
-                    len(existing_records) + len(new_records),
-                )
+                    # Write checkpoint (existing + new)
+                    self._write_checkpoint(existing_records + new_records)
+                    logger.info(
+                        "Checkpoint saved. %d new records this run, %d total",
+                        len(new_records),
+                        len(existing_records) + len(new_records),
+                    )
+            except (KeyboardInterrupt, SystemExit):
+                logger.warning("Pipeline interrupted, saving progress and checkpoint...")
+                self._save_progress()
+                if new_records:
+                    self._write_checkpoint(existing_records + new_records)
+                raise
 
             # Final output: merge existing + new, deduplicate by arxiv_id
             all_records = self._merge_records(existing_records, new_records)
@@ -483,23 +497,43 @@ class Pipeline:
                 for args in worker_args
             }
 
-            for future in tqdm(
-                as_completed(futures),
-                total=len(futures),
-                desc="Parsing",
-                unit="paper",
-            ):
-                arxiv_id = futures[future]
-                try:
-                    result = future.result(timeout=120)
-                    if result:
-                        records.append(result)
-                        self.progress[arxiv_id] = ProcessingStatus.COMPLETED.value
-                    else:
-                        self.progress[arxiv_id] = ProcessingStatus.FAILED_PARSE.value
-                except Exception as e:
-                    logger.warning("Worker failed for %s: %s", arxiv_id, e)
-                    self.progress[arxiv_id] = ProcessingStatus.FAILED_PARSE.value
+            per_paper_timeout = 120  # seconds to wait per stuck paper
+            completed_count = 0
+            pbar = tqdm(total=len(futures), desc="Parsing", unit="paper")
+            remaining = set(futures.keys())
+            try:
+                while remaining:
+                    done, remaining_set = wait(remaining, timeout=per_paper_timeout, return_when=FIRST_COMPLETED)
+                    if not done:
+                        # No future completed within timeout — skip the rest
+                        timed_out = [futures[f] for f in remaining]
+                        logger.warning(
+                            "Parsing timed out, skipping %d papers: %s",
+                            len(timed_out), timed_out[:10],
+                        )
+                        for future in remaining:
+                            future.cancel()
+                            self.progress[futures[future]] = ProcessingStatus.FAILED_PARSE.value
+                        pbar.update(len(remaining))
+                        break
+                    for future in done:
+                        arxiv_id = futures[future]
+                        try:
+                            result = future.result(timeout=0)
+                            if result:
+                                records.append(result)
+                                self.progress[arxiv_id] = ProcessingStatus.COMPLETED.value
+                            else:
+                                self.progress[arxiv_id] = ProcessingStatus.FAILED_PARSE.value
+                        except Exception as e:
+                            logger.warning("Worker failed for %s: %s", arxiv_id, e)
+                            self.progress[arxiv_id] = ProcessingStatus.FAILED_PARSE.value
+                        completed_count += 1
+                        pbar.update(1)
+                    remaining = remaining_set
+            finally:
+                pbar.close()
+                self._save_progress()
 
         # Step 3: Optional .txt export (reuses sections from workers, no re-parsing)
         if self.txt_export:
@@ -511,7 +545,6 @@ class Pipeline:
                     except Exception as e:
                         logger.warning("txt export failed for %s: %s", record["arxiv_id"], e)
 
-        self._save_progress()
         return records
 
     def _write_parquet(self, records: list[dict]) -> Path:
