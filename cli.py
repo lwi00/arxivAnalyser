@@ -59,6 +59,14 @@ def cmd_run(args: argparse.Namespace) -> None:
         config.setdefault("processing", {})
         config["processing"]["max_papers_per_run"] = args.batch
 
+    # Apply date filter overrides from CLI
+    if args.filter_date_start:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_start"] = args.filter_date_start
+    if args.filter_date_end:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_end"] = args.filter_date_end
+
     setup_logging(config.get("processing", {}).get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
 
@@ -214,6 +222,14 @@ def cmd_related_works(args: argparse.Namespace) -> None:
         config.setdefault("processing", {})
         config["processing"]["max_papers_per_run"] = args.batch
 
+    # Apply date filter overrides from CLI
+    if args.filter_date_start:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_start"] = args.filter_date_start
+    if args.filter_date_end:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_end"] = args.filter_date_end
+
     setup_logging(config.get("processing", {}).get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
 
@@ -304,6 +320,14 @@ def main() -> None:
         "--batch", type=int, default=0,
         help="Max papers to process (0 = unlimited, default: 0)",
     )
+    run_parser.add_argument(
+        "--filter-date-start", default=None,
+        help="Only process papers published on/after this date (YYYY-MM-DD)",
+    )
+    run_parser.add_argument(
+        "--filter-date-end", default=None,
+        help="Only process papers published on/before this date (YYYY-MM-DD)",
+    )
 
     # Single paper command
     single_parser = subparsers.add_parser("single", help="Process a single paper")
@@ -336,6 +360,14 @@ def main() -> None:
     rw_parser.add_argument(
         "--batch", type=int, default=0,
         help="Max papers to process (0 = unlimited, default: 0)",
+    )
+    rw_parser.add_argument(
+        "--filter-date-start", default=None,
+        help="Only process papers published on/after this date (YYYY-MM-DD)",
+    )
+    rw_parser.add_argument(
+        "--filter-date-end", default=None,
+        help="Only process papers published on/before this date (YYYY-MM-DD)",
     )
 
     # Metadata command
