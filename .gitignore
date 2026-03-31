@@ -134,3 +134,4 @@ dmypy.json
 Thumbs.db
 
 arxiv-metadata-oai-snapshot.json
+data/metadata_cache.jsonl
