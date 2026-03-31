@@ -55,6 +55,18 @@ def cmd_run(args: argparse.Namespace) -> None:
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
+    if args.batch > 0:
+        config.setdefault("processing", {})
+        config["processing"]["max_papers_per_run"] = args.batch
+
+    # Apply date filter overrides from CLI
+    if args.filter_date_start:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_start"] = args.filter_date_start
+    if args.filter_date_end:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_end"] = args.filter_date_end
+
     setup_logging(config.get("processing", {}).get("log_level", "INFO"))
     logger = logging.getLogger(__name__)
 
@@ -184,6 +196,77 @@ def cmd_convert(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_related_works(args: argparse.Namespace) -> None:
+    """Fast path: extract only related works sections as .txt files.
+
+    Optimized for speed: uses async downloads, skips Parquet output,
+    disables LLM fallback, and only writes related works sections.
+
+    Args:
+        args: Parsed CLI arguments.
+    """
+    from src.metadata import MetadataFetcher
+    from src.pipeline import Pipeline
+
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+
+    # Override config for maximum speed
+    config.setdefault("output", {})
+    config["output"]["txt_export"] = True
+    config["output"]["txt_related_only"] = True
+    config["output"]["txt_only_mode"] = True
+    config.setdefault("classification", {})
+    config["classification"]["use_llm_fallback"] = False
+    if args.batch > 0:
+        config.setdefault("processing", {})
+        config["processing"]["max_papers_per_run"] = args.batch
+
+    # Apply date filter overrides from CLI
+    if args.filter_date_start:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_start"] = args.filter_date_start
+    if args.filter_date_end:
+        config.setdefault("processing", {})
+        config["processing"]["filter_date_end"] = args.filter_date_end
+
+    setup_logging(config.get("processing", {}).get("log_level", "INFO"))
+    logger = logging.getLogger(__name__)
+
+    logger.info("Related-works extraction mode (txt-only, no LLM, async downloads)")
+
+    # Load metadata
+    fetcher = MetadataFetcher(
+        data_dir=config.get("download", {}).get("data_dir", "./data")
+    )
+    query_config = config.get("query", {})
+    metadata_list = fetcher.load_metadata_cache()
+
+    if not metadata_list:
+        if args.kaggle_json:
+            metadata_list = list(
+                fetcher.load_from_kaggle_json(
+                    args.kaggle_json,
+                    date_start=query_config.get("date_start", "2022-01-01"),
+                    date_end=query_config.get("date_end", "2025-12-31"),
+                )
+            )
+        else:
+            metadata_list = list(
+                fetcher.fetch_via_oai(
+                    date_start=query_config.get("date_start", "2022-01-01"),
+                    date_end=query_config.get("date_end", "2025-12-31"),
+                )
+            )
+        fetcher.save_metadata_cache(metadata_list)
+
+    logger.info("Loaded %d papers", len(metadata_list))
+
+    pipeline = Pipeline(config)
+    output_path = pipeline.run(metadata_list)
+    logger.info("Done! Related works .txt files written to: %s", output_path)
+
+
 def cmd_metadata(args: argparse.Namespace) -> None:
     """Fetch and save metadata only.
 
@@ -233,6 +316,18 @@ def main() -> None:
     run_parser.add_argument(
         "--kaggle-json", default=None, help="Path to Kaggle ArXiv JSON for metadata"
     )
+    run_parser.add_argument(
+        "--batch", type=int, default=0,
+        help="Max papers to process (0 = unlimited, default: 0)",
+    )
+    run_parser.add_argument(
+        "--filter-date-start", default=None,
+        help="Only process papers published on/after this date (YYYY-MM-DD)",
+    )
+    run_parser.add_argument(
+        "--filter-date-end", default=None,
+        help="Only process papers published on/before this date (YYYY-MM-DD)",
+    )
 
     # Single paper command
     single_parser = subparsers.add_parser("single", help="Process a single paper")
@@ -250,6 +345,29 @@ def main() -> None:
     )
     convert_parser.add_argument(
         "--output-dir", default="./data/txt", help="Directory for output .txt files"
+    )
+
+    # Related-works command (fast path)
+    rw_parser = subparsers.add_parser(
+        "related-works", help="Fast extraction of related works sections as .txt files"
+    )
+    rw_parser.add_argument(
+        "--config", default="configs/default.yaml", help="Path to config YAML"
+    )
+    rw_parser.add_argument(
+        "--kaggle-json", default=None, help="Path to Kaggle ArXiv JSON for metadata"
+    )
+    rw_parser.add_argument(
+        "--batch", type=int, default=0,
+        help="Max papers to process (0 = unlimited, default: 0)",
+    )
+    rw_parser.add_argument(
+        "--filter-date-start", default=None,
+        help="Only process papers published on/after this date (YYYY-MM-DD)",
+    )
+    rw_parser.add_argument(
+        "--filter-date-end", default=None,
+        help="Only process papers published on/before this date (YYYY-MM-DD)",
     )
 
     # Metadata command
@@ -271,6 +389,8 @@ def main() -> None:
         cmd_single(args)
     elif args.command == "convert":
         cmd_convert(args)
+    elif args.command == "related-works":
+        cmd_related_works(args)
     elif args.command == "metadata":
         cmd_metadata(args)
     else:

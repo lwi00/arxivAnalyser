@@ -24,12 +24,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 import tarfile
 import time
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
+import certifi
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -134,7 +136,10 @@ class Downloader:
         semaphore = asyncio.Semaphore(self.max_concurrent)
         results = {}
 
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(
+            connector=connector,
             headers={"User-Agent": "arxiv-section-extractor/0.1 (research project)"},
             timeout=aiohttp.ClientTimeout(total=30),
         ) as session:
@@ -183,7 +188,8 @@ class Downloader:
                     if progress_callback:
                         progress_callback(arxiv_id, has_source)
                     return has_source
-            except Exception:
+            except Exception as e:
+                logger.debug("Probe failed for %s: %s", arxiv_id, e)
                 if progress_callback:
                     progress_callback(arxiv_id, False)
                 return False
@@ -291,7 +297,10 @@ class Downloader:
         semaphore = asyncio.Semaphore(self.max_concurrent)
         results = {}
 
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_ctx)
         async with aiohttp.ClientSession(
+            connector=connector,
             headers={"User-Agent": "arxiv-section-extractor/0.1 (research project)"},
             timeout=aiohttp.ClientTimeout(total=120),
         ) as session:

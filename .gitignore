@@ -5,7 +5,7 @@ __pycache__/
 *.lock
 # C extensions
 *.so
-
+data/.
 # Distribution / packaging
 .Python
 build/
@@ -132,3 +132,6 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+
+arxiv-metadata-oai-snapshot.json
+data/metadata_cache.jsonl

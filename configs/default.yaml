@@ -60,6 +60,10 @@ output:
   txt_export: true
   # Directory for .txt output files
   txt_dir: "./data/txt"
+  # Only write related works sections as .txt (skip other sections)
+  txt_related_only: true
+  # Skip Parquet output entirely — only produce .txt files
+  txt_only_mode: false
 
 # Processing settings
 processing:
@@ -74,3 +78,8 @@ processing:
   max_papers_per_run: 1000
   # Progress tracking file
   progress_file: "./data/progress.json"
+  # Optional date filter: only process papers published on/after this date (YYYY-MM-DD)
+  # Applied after loading from cache, before downloading. Null = no filter.
+  filter_date_start: null
+  # Optional date filter: only process papers published on/before this date (YYYY-MM-DD)
+  filter_date_end: null
