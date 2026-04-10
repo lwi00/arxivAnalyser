@@ -184,6 +184,25 @@ class MetadataFetcher:
             categories_str = self._get_text(metadata, "arxiv:categories", OAI_NS) or ""
             categories = categories_str.split()
 
+            # Extract publication date from v1 version entry
+            published = ""
+            versions = metadata.findall("arxiv:version", OAI_NS)
+            for v in versions:
+                if v.get("version") == "v1":
+                    raw_date = self._get_text(v, "arxiv:date", OAI_NS) or ""
+                    if raw_date:
+                        try:
+                            dt = datetime.strptime(raw_date, "%a, %d %b %Y %H:%M:%S %Z")
+                            published = dt.strftime("%Y-%m-%d")
+                        except ValueError:
+                            published = raw_date
+                    break
+
+            # Header datestamp is the last-modified date
+            header_datestamp = self._get_text(
+                record, ".//oai:header/oai:datestamp", OAI_NS
+            ) or ""
+
             return PaperMetadata(
                 arxiv_id=arxiv_id,
                 title=self._get_text(metadata, "arxiv:title", OAI_NS) or "",
@@ -192,8 +211,8 @@ class MetadataFetcher:
                 ),
                 categories=categories,
                 primary_category=categories[0] if categories else "",
-                published=self._get_text(metadata, "arxiv:datestamp", OAI_NS) or "",
-                updated=self._get_text(metadata, "arxiv:datestamp", OAI_NS) or "",
+                published=published,
+                updated=header_datestamp,
                 abstract=self._get_text(metadata, "arxiv:abstract", OAI_NS) or "",
                 doi=self._get_text(metadata, "arxiv:doi", OAI_NS),
             )
