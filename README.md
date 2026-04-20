@@ -1,282 +1,306 @@
 # ArXiv Related-Work Analysis
 
-This repository extracts related-work sections from arXiv computer-science papers
-and analyzes whether newer related-work writing is easier for language models to
-predict than older writing.
+This repository extracts the *related-work* sections of arXiv computer-science
+papers and looks for aggregate writing-style shifts between a pre-LLM (2015)
+group and a post-LLM (2025) group. It ships an extraction pipeline
+(`src/` + `cli.py`), an analysis notebook (`analysis.ipynb`), and a tracked
+language-model scoring experiment under `experiments/qwen_curated/`. The aim
+is not to classify individual papers as AI-written — it is to measure how the
+distribution of academic prose has moved.
 
-The project has two analysis layers:
+## Research question
 
-1. A broad notebook analysis over the extracted corpus, covering readability,
-   lexical diversity, passive voice, citation structure, LLM-favored markers,
-   GPT-2 perplexity, and a small Binoculars-style detector run.
-2. A stricter curated Qwen pass over a balanced, word-count-stratified subset,
-   used as the current clean result for model-based predictability.
+Did the widespread availability of large language models after 2022 measurably
+change the prose style of related-work sections in arXiv CS papers?
 
-The current tracked experiment is in `experiments/qwen_curated/`. Raw/generated
-corpora and older intermediate outputs have been moved under `local_artifacts/`,
-which is ignored by git.
+The evidence is collected along four axes so that a shift in one can be
+cross-checked against the others:
 
-## Research Question
+- **Surface style** — readability, lexical diversity, sentence structure,
+  passive voice.
+- **Vocabulary markers** — phrases that prior literature flagged as
+  LLM-favored ("delve into", "intricate", "underscores", ...).
+- **Structure** — word count, paragraph count, citation count, citation
+  density.
+- **Model predictability** — causal-LM perplexity, sentence-level
+  burstiness, and a Binoculars-style base/instruct ratio.
 
-The working hypothesis is that widespread LLM availability after 2022 has
-measurably changed the prose style of related-work sections in computer-science
-papers. The project does not attempt to classify individual papers as AI-written.
-Instead, it looks for aggregate distribution shifts between an older comparison
-group and a 2025 group.
+## Corpus
 
-The evidence is intentionally multi-axis:
+Two groups of related-work sections extracted from arXiv CS papers:
 
-- surface style: readability, lexical diversity, sentence structure, passive voice
-- vocabulary markers: high-confidence LLM-favored phrases from prior literature
-- structure: word count, paragraph count, citation counts and citation density
-- model predictability: causal-LM perplexity and sentence-level burstiness
-- relative model behavior: a Binoculars-style base/instruct comparison
+| group | papers (post-filter) | source window |
+| --- | ---: | --- |
+| older / 2015 | 4,610 | pre-LLM comparison |
+| 2025 | 4,056 | post-LLM |
+| total | 8,666 | 8,692 raw text files, 8,683 papers before the <50-word filter |
 
-## Current Curated Qwen Result
+The generated corpora and older intermediate outputs live under
+`local_artifacts/`, which is gitignored. The tracked `data/` directory only
+contains a tiny sample (one paper, `data/txt/1706.03762/`). The curated,
+word-count-balanced scoring manifest (3,919 + 3,919 papers) and the final
+Qwen metrics CSV are tracked under `experiments/qwen_curated/`.
 
-The main tracked result file is:
+## Analysis — Part 1: Simple NLP
 
-```text
-experiments/qwen_curated/qwen25_05b_curated_metrics.csv
-```
+`analysis.ipynb` builds per-paper features from the extracted related-work
+text using NLTK tokenization and POS tagging, then compares the two year
+groups with Mann-Whitney U tests, Welch's t-tests, Cohen's d, rank-biserial
+correlation, and Benjamini-Hochberg FDR correction.
 
-It contains `7,838` balanced related-work samples:
+### 1.1 Linguistic style
 
-- `3,919` papers from the older corpus
-- `3,919` papers from the 2025 corpus
-- matched by word-count strata
-- scored with `Qwen/Qwen2.5-0.5B`
+Six core metrics capture readability, lexical variety, and voice. Mean
+sentence length barely moves; the rest all shift with medium-to-large effect
+sizes.
 
-Summary of the completed Qwen run:
+| metric | older mean | 2025 mean | change | effect |
+| --- | ---: | ---: | ---: | ---: |
+| Mean sentence length | 19.89 | 19.77 | −0.6% | null |
+| MATTR lexical diversity | 0.796 | 0.820 | +3.0% | medium |
+| Hapax ratio | 0.311 | 0.346 | +11.4% | medium |
+| Flesch reading ease | 19.33 | 10.34 | −46.5% | large |
+| Gunning Fog | 19.20 | 20.71 | +7.8% | medium-large |
+| Passive voice ratio | 0.279 | 0.203 | −27.3% | medium |
+
+The interpretation is that 2025 related-work prose is not "flatter" or
+shorter. It is denser, harder to read, more lexically varied, and less
+passive — consistent with what LLM-assisted writing tends to produce.
+
+### 1.2 LLM-favored vocabulary markers
+
+The notebook counts occurrences of 24 phrases flagged by prior work as
+over-represented in LLM output, split into a high-confidence list (rare
+before 2022, e.g. "delve into", "intricate", "underscores", "plays a crucial
+role", "in the realm of") and an elevated-frequency list (existed before but
+spiked, e.g. "additionally", "furthermore", "notably", "landscape").
+
+The aggregate high-confidence marker score rose from **0.048** to **0.276**
+markers per 1,000 words, a **+471.6%** increase with Mann-Whitney
+*p* ≈ 2.46 × 10⁻⁶⁷. Individual phrases with the sharpest rises include
+"underscores" (~25×), "intricate" (~12×), and "plays a crucial role" (~7×).
+"Additionally" went from appearing in 8.4% of papers to 26.4%.
+
+The marker list is phrase-level evidence, not a detector by itself. Its
+value is that it points in the same direction as the surface-style metrics.
+
+### 1.3 Structural stability
+
+The container around the prose barely changed.
+
+| metric | older mean | 2025 mean | change |
+| --- | ---: | ---: | ---: |
+| Word count | 623.15 | 588.11 | −5.6% |
+| Paragraph count | 9.28 | 8.55 | −7.9% |
+| Citation count | 18.85 | 18.69 | −0.9% |
+| Citations per sentence | 0.661 | 0.695 | +5.1% |
+| Citations per 100 words | 3.403 | 3.599 | +5.8% |
+
+Citation counts are essentially flat and citation-introduction patterns
+(parenthetical, author-named, verb-led, list-style) moved only modestly.
+What changed is the prose between citations, not the scaffolding of the
+section.
+
+## Analysis — Part 2: Perplexity and burstiness
+
+If the style shifts above are real, a causal language model should find the
+2025 sections slightly more predictable than the older ones. The notebook
+and the `experiments/qwen_curated/` scripts test that with three
+predictability-style metrics.
+
+- **Log perplexity** — how surprised a causal LM is by the document, per
+  token. Lower means more predictable.
+- **Sentence burstiness** — standard deviation (and coefficient of
+  variation) of sentence-level perplexity across the document. Human text
+  tends to be burstier than LLM text.
+- **Binoculars-style ratio** — the cross-perplexity of an instruction-tuned
+  model against its base model. Less sensitive to raw domain perplexity
+  than a single-model score.
+
+### 2.1 GPT-2-medium baseline (full corpus)
+
+From the notebook's earlier full-corpus run:
+
+| detector | older mean | 2025 mean | change | note |
+| --- | ---: | ---: | ---: | --- |
+| GPT-2-medium log perplexity | 3.355 | 3.341 | −0.4% | significant but tiny |
+| Sentence burstiness std | 0.805 | 0.796 | −1.2% | significant but tiny |
+
+Direction is correct (2025 marginally more predictable, marginally less
+bursty), but effect sizes are negligible at this scale. GPT-2's vocabulary
+is also years behind the 2025 corpus, which biases the absolute numbers.
+
+### 2.2 Qwen2.5-0.5B curated pass (tracked result)
+
+The cleanest, reproducible predictability experiment in this repo. A
+balanced manifest (`experiments/qwen_curated/curated_manifest_gpt2.csv`)
+pools papers into word-count strata and samples **3,919** from each year
+group per stratum, for **7,838** total. Scoring was done with
+`Qwen/Qwen2.5-0.5B` on an H100; results are tracked at
+`experiments/qwen_curated/qwen25_05b_curated_metrics.csv`.
 
 | year group | mean log perplexity | mean perplexity | burstiness std | burstiness cv |
 | --- | ---: | ---: | ---: | ---: |
 | 2015 | 3.0061 | 21.2919 | 0.8923 | 0.1958 |
 | 2025 | 2.9694 | 20.7033 | 0.8930 | 0.1974 |
 
-Interpretation: Qwen finds the 2025 related-work sections slightly more
-predictable than the older matched sample. The direction matches the GPT-2
-baseline, but the effect is still small.
+Qwen finds the 2025 sections slightly more predictable than the
+word-count-matched older sample. Direction matches GPT-2; effect remains
+small. This is the current headline number because the manifest is balanced
+before scoring, removing section-length as a confound.
 
-This result is deliberately conservative: the manifest is balanced by year group
-and matched by word-count stratum before scoring.
+### 2.3 Binoculars-style base/instruct ratio
 
-## Full-Corpus Notebook Findings
-
-The original `analysis.ipynb` ran over the larger extracted corpus before the
-cleanup:
-
-- `8,692` related-work text files
-- `8,683` papers before filtering
-- `8,666` papers after removing sections with fewer than 50 words
-- `4,610` older-group papers
-- `4,056` 2025 papers
-
-The exported full-corpus metrics were moved to:
-
-```text
-local_artifacts/2026-04-20-cleanup/old_outputs/related_works_metrics.csv
-```
-
-That file is ignored by git, but it preserves the notebook output locally.
-
-### Style Shift
-
-The notebook found a strong style shift between the two groups. Mean sentence
-length is effectively unchanged, but the rest of the linguistic metrics move:
-
-| metric | older mean | 2025 mean | change | effect |
-| --- | ---: | ---: | ---: | ---: |
-| Mean sentence length | 19.89 | 19.77 | -0.6% | null |
-| MATTR lexical diversity | 0.796 | 0.820 | +3.0% | medium |
-| Hapax ratio | 0.311 | 0.346 | +11.4% | medium |
-| Flesch reading ease | 19.33 | 10.34 | -46.5% | large |
-| Gunning Fog | 19.20 | 20.71 | +7.8% | medium-large |
-| Passive voice ratio | 0.279 | 0.203 | -27.3% | medium |
-
-The notebook interpretation is that 2025 related-work prose is not simply
-"flatter" or shorter. It is denser, harder to read, more lexically varied, and
-less passive.
-
-### LLM-Favored Marker Shift
-
-The aggregate high-confidence LLM-marker score rose from `0.048` to `0.276`
-markers per 1,000 words, a `+471.6%` increase. The notebook reports a
-Mann-Whitney p-value of `2.46e-67`.
-
-Examples of markers that increased sharply in 2025 include:
-
-- `additionally`
-- `furthermore`
-- `notably`
-- `intricate`
-- `landscape`
-- `underscores`
-- `in the realm of`
-- `plays a crucial/pivotal role`
-
-The marker analysis is phrase-level evidence; it is not a detector by itself.
-Its value is that it points in the same direction as the broader style metrics.
-
-### Structural Stability
-
-The section container changed much less than the prose:
-
-| metric | older mean | 2025 mean | change |
-| --- | ---: | ---: | ---: |
-| Word count | 623.15 | 588.11 | -5.6% |
-| Paragraph count | 9.28 | 8.55 | -7.9% |
-| Citation count | 18.85 | 18.69 | -0.9% |
-| Citations per sentence | 0.661 | 0.695 | +5.1% |
-| Citations per 100 words | 3.403 | 3.599 | +5.8% |
-
-Citation counts are essentially stable, and citation-introduction patterns moved
-only modestly. The main shift is in the prose between citations, not in the
-basic structure of related-work sections.
-
-### Detector-Style Results
-
-The original notebook merged older detector runs:
+A stratified 500/500 sub-sample was scored with Qwen2.5-0.5B base and
+Qwen2.5-0.5B-Instruct via `run_binoculars.py`:
 
 | detector | older mean | 2025 mean | change | note |
 | --- | ---: | ---: | ---: | --- |
-| GPT-2-medium log perplexity | 3.355 | 3.341 | -0.4% | significant but tiny |
-| Sentence burstiness std | 0.805 | 0.796 | -1.2% | significant but tiny |
-| Binoculars score, 500/500 sample | 0.9701 | 0.9736 | +0.4% | small-to-medium signal |
+| Binoculars score | 0.9701 | 0.9736 | +0.4% | Cohen's *d* ≈ −0.36, *p* ≈ 5 × 10⁻⁸ |
 
-The notebook conclusion was that single-model perplexity and burstiness are weak
-signals at this scale, while the relative base/instruct Binoculars-style score
-is more informative. The later curated Qwen pass confirms the single-model
-direction on a balanced manifest, but still shows only a small effect size.
+This is the only perplexity-class metric with a clear-direction signal at
+non-trivial effect size: the instruction-tuned model is relatively more
+confident on the 2025 prose than the base model is. Full-corpus Binoculars
+is listed as future work.
 
-## Repository Layout
+### 2.4 Takeaway
+
+Single-model perplexity and burstiness are weak signals here. The
+linguistic-style and LLM-marker shifts (Part 1) are much larger than
+anything the causal LMs expose on their own. The Binoculars-style
+base/instruct contrast is the only model-based signal that lines up cleanly
+with the style evidence.
+
+## Headline findings
+
+| axis | metric | direction | effect |
+| --- | --- | --- | --- |
+| surface style | Flesch reading ease | 2025 ↓ | large (−46.5%) |
+| surface style | Passive voice ratio | 2025 ↓ | medium (−27.3%) |
+| surface style | Gunning Fog | 2025 ↑ | medium-large (+7.8%) |
+| surface style | MATTR / hapax | 2025 ↑ | medium |
+| vocabulary | LLM-marker score per 1k words | 2025 ↑ | very large (+471.6%) |
+| structure | word count, paragraphs, citations | flat | null / tiny |
+| LM predictability | GPT-2 log-ppl, burstiness | 2025 ↓ | tiny but directional |
+| LM predictability | Qwen2.5-0.5B (curated) log-ppl | 2025 ↓ | small |
+| LM predictability | Binoculars base/instruct | 2025 ↑ | small-medium |
+
+Prose style and vocabulary are where the signal lives; structure barely
+moves; single-model predictability is weakly in the expected direction; the
+relative base/instruct signal is the cleanest LM-based evidence.
+
+## Repository layout
 
 ```text
 .
-├── analysis.ipynb                         # Original exploratory/statistical notebook
-├── cli.py                                 # Top-level extractor CLI
+├── analysis.ipynb                            # Main notebook: Part 1 + Part 2 analysis
+├── cli.py                                    # Extraction CLI entry point
 ├── configs/
-│   └── default.yaml                       # Default extraction configuration
-├── data/                                  # Tracked tiny sample data only
+│   └── default.yaml                          # Default extraction configuration
+├── data/                                     # Tracked tiny sample only (1706.03762)
 ├── docs/
-│   └── ARCHITECTURE.md                    # Extraction architecture notes
+│   └── ARCHITECTURE.md                       # Extraction pipeline design notes
 ├── experiments/
 │   └── qwen_curated/
-│       ├── README.md                      # Experiment-specific notes
-│       ├── build_curated_manifest.py      # Builds the balanced manifest
-│       ├── curated_manifest_gpt2.csv      # Manifest used by GPT-2 and Qwen runs
-│       ├── qwen25_05b_curated_metrics.csv # Final Qwen metrics
-│       ├── run_gpt2_curated.py            # Generic causal-LM scoring script
-│       ├── run_binoculars.py              # Earlier Binoculars-style reference script
-│       ├── run_perplexity.py              # Earlier GPT-2-medium reference script
-│       └── configs/
-│           └── 2025.yaml                  # 2025 corpus extraction configuration
-├── local_artifacts/                       # Ignored generated data and old outputs
-├── src/                                   # Extractor implementation
-└── tests/                                 # Unit tests
+│       ├── README.md                         # Experiment-specific notes
+│       ├── build_curated_manifest.py         # Balanced word-count-stratified manifest
+│       ├── curated_manifest_gpt2.csv         # Manifest used by GPT-2 and Qwen runs
+│       ├── qwen25_05b_curated_metrics.csv    # Tracked Qwen2.5-0.5B metrics (7,838 rows)
+│       ├── run_gpt2_curated.py               # Generic causal-LM scoring script
+│       ├── run_perplexity.py                 # Earlier GPT-2-medium reference script
+│       ├── run_binoculars.py                 # Earlier base/instruct reference script
+│       └── configs/2025.yaml                 # 2025 corpus extraction configuration
+├── local_artifacts/                          # Gitignored: generated corpora, old outputs
+├── src/
+│   ├── metadata.py                           # OAI-PMH and Kaggle JSON metadata fetch
+│   ├── downloader.py                         # ArXiv source download + HEAD probing
+│   ├── latex_parser.py                       # LaTeX section extraction
+│   ├── section_classifier.py                 # 3-tier classifier (keyword / fuzzy / LLM)
+│   ├── tex_to_txt.py                         # Per-section plain-text export
+│   ├── pipeline.py                           # Orchestration, batching, checkpointing
+│   └── models.py                             # Data structures
+└── tests/                                    # Unit tests for classifier and tex→txt
 ```
 
-## Methodology
+The extractor uses a three-tier section classifier: direct keyword match
+(~70% of sections), scored fuzzy match (~20%), Claude Sonnet fallback on the
+ambiguous remainder (~10%, budget-capped). The LaTeX parser is intentionally
+regex-based so real-world non-standard LaTeX does not break it.
 
-### 1. Related-Work Extraction
+## How to reproduce
 
-The extraction pipeline downloads arXiv sources, parses LaTeX, classifies
-sections, and writes related-work text files. The relevant modules are in `src/`:
-
-- `metadata.py`: metadata fetching
-- `downloader.py`: source download and retry handling
-- `latex_parser.py`: LaTeX parsing
-- `section_classifier.py`: section detection/classification
-- `tex_to_txt.py`: text export
-- `pipeline.py`: orchestration and checkpointing
-
-The 2025 extraction configuration used for the generated corpus is archived at:
-
-```text
-experiments/qwen_curated/configs/2025.yaml
-```
-
-The generated raw corpora used for the completed run are not tracked. They are
-currently stored locally at:
-
-```text
-local_artifacts/2026-04-20-cleanup/corpus/data_txt_untracked
-local_artifacts/2026-04-20-cleanup/corpus/data-2025/txt
-```
-
-### 2. Notebook Feature Extraction
-
-`analysis.ipynb` builds paper-level features from the extracted text:
-
-- sentence and word counts
-- paragraph counts
-- citation counts and citation density
-- Flesch reading ease
-- Gunning Fog index
-- type-token ratio, MATTR, and hapax ratio
-- passive voice ratio
-- LLM-marker frequencies
-- optional merged perplexity, burstiness, and Binoculars metrics
-
-The notebook uses Mann-Whitney U tests, Welch's t-tests, Cohen's d,
-rank-biserial correlation, and Benjamini-Hochberg FDR correction across the
-master metric table.
-
-### 3. Curated Manifest
-
-The manifest builder creates a balanced comparison set from the two corpora. It:
-
-- reads related-work `.txt` files from both groups
-- removes very short or low-text-quality samples
-- caps extreme lengths per year group
-- bins papers into pooled word-count strata
-- samples the same number from each year group in each stratum
-
-The produced manifest is:
-
-```text
-experiments/qwen_curated/curated_manifest_gpt2.csv
-```
-
-Despite the filename, the manifest is model-independent. It was first used for
-GPT-2, then reused for Qwen so the comparison stayed fixed.
-
-### 4. Language-Model Scoring
-
-The scoring script computes:
-
-- document-level log perplexity
-- document-level perplexity
-- sentence-level burstiness standard deviation
-- sentence-level burstiness coefficient of variation
-- token and sentence counts used for scoring
-
-The current run used:
-
-```text
-Qwen/Qwen2.5-0.5B
-```
-
-on a RunPod H100 GPU. The first full pass used a larger batch size and hit CUDA
-OOM during sentence-level scoring near the heavy tail; checkpointing preserved
-the completed rows, and the run was resumed with a smaller batch size.
-
-## Reproducing The Qwen Pass
-
-Install the analysis dependencies:
+### Install
 
 ```bash
+# Extractor + dev tools
+pip install -e ".[dev]"
+
+# Add analysis dependencies (pandas, matplotlib, seaborn, scipy, nltk,
+# torch, transformers) for the notebook and LM scoring scripts
 pip install -e ".[analysis]"
 ```
 
-Run from the repository root. Because the generated corpora are now archived
-under `local_artifacts/`, pass their paths explicitly:
+Python 3.10+ is required. The first notebook run will download NLTK data
+(handled in the setup cell).
+
+### Run the extractor
+
+Full pipeline (download → LaTeX parse → classify → write Parquet and/or
+per-section `.txt`):
+
+```bash
+python cli.py run --config configs/default.yaml
+```
+
+Fast path for related-work-only text export (no Parquet, no LLM fallback):
+
+```bash
+python cli.py related-works --config configs/default.yaml
+```
+
+Debug a single paper end-to-end:
+
+```bash
+python cli.py single 1706.03762 --use-llm
+```
+
+Other commands: `python cli.py convert ...` (batch LaTeX→txt),
+`python cli.py metadata --source oai|kaggle ...` (metadata-only fetch).
+See `docs/ARCHITECTURE.md` for pipeline design and operational detail.
+
+### Run the notebook
+
+`analysis.ipynb` expects two populated text corpora:
+
+```text
+data/txt/           # older / 2015 group
+data-2025/txt/      # 2025 group
+```
+
+This repo does **not** ship those corpora. You have two options:
+
+1. **Restore** them from `local_artifacts/` if you have the cleanup snapshot
+   (paths used by the Qwen run:
+   `local_artifacts/2026-04-20-cleanup/corpus/data_txt_untracked` and
+   `local_artifacts/2026-04-20-cleanup/corpus/data-2025/txt`).
+2. **Regenerate** them by running the extractor with appropriate date
+   windows in `configs/default.yaml` (or the archived
+   `experiments/qwen_curated/configs/2025.yaml` for the 2025 config).
+
+The notebook also optionally merges `perplexity_metrics.csv` and
+`binoculars_metrics.csv` if present; if missing, those cells skip.
+
+### Re-score with Qwen (or any causal LM)
+
+`experiments/qwen_curated/run_gpt2_curated.py` is generic despite its name
+and accepts any HuggingFace causal-LM via `--model`. It auto-resumes from
+`*.partial` checkpoints.
 
 ```bash
 python experiments/qwen_curated/run_gpt2_curated.py \
   --manifest experiments/qwen_curated/curated_manifest_gpt2.csv \
-  --output experiments/qwen_curated/qwen25_05b_curated_metrics.csv \
-  --model Qwen/Qwen2.5-0.5B \
+  --output   experiments/qwen_curated/qwen25_05b_curated_metrics.csv \
+  --model    Qwen/Qwen2.5-0.5B \
   --data-2015 local_artifacts/2026-04-20-cleanup/corpus/data_txt_untracked \
   --data-2025 local_artifacts/2026-04-20-cleanup/corpus/data-2025/txt \
   --batch-size 8 \
@@ -284,12 +308,7 @@ python experiments/qwen_curated/run_gpt2_curated.py \
   --log-every 50
 ```
 
-The script resumes automatically from `*.partial` files and leaves the final CSV
-only after all rows are written.
-
-## Using The Existing Results
-
-For most analysis work, load the final Qwen CSV directly:
+To use the tracked result directly without re-scoring:
 
 ```python
 import pandas as pd
@@ -305,38 +324,37 @@ summary = df.groupby("year_group")[
 print(summary)
 ```
 
-The original `analysis.ipynb` still contains older hard-coded paths. If it is
-used again without edits, it will not automatically pick up the moved Qwen
-result file or the ignored raw corpora.
-
-## Extraction Pipeline Quickstart
-
-Install the package:
-
-```bash
-pip install -e ".[dev]"
-```
-
-Run tests:
+### Tests
 
 ```bash
 pytest
 ```
 
-Run the extractor CLI against the default configuration:
+Current coverage: section-classifier heuristics (including regressions on
+headings starting with `i`/`v`/`x` so numbered-prefix stripping does not eat
+real words) and the filename-sanitizer used by the tex-to-text exporter.
 
-```bash
-python cli.py run --config configs/default.yaml
-```
+## Limitations
 
-See `docs/ARCHITECTURE.md` for pipeline design notes and operational details.
+- **No per-category breakdown.** All CS subcategories are pooled; a shift
+  could be driven by subfield growth (e.g. more ML papers in 2025) rather
+  than writing style.
+- **Field growth confound.** The 2025 group is not demographically matched
+  to 2015 beyond word-count stratification in the curated pass.
+- **GPT-2 vocabulary drift.** Absolute GPT-2 perplexity values are biased
+  by the model's age; only Qwen2.5-0.5B is contemporary.
+- **Passive-voice heuristic.** POS-based, imperfect — picks up some false
+  positives on scientific prose.
+- **No causal claim.** This is a distribution-shift study. It does not
+  attempt to label individual papers as AI-written or -assisted.
+- **Citation handling.** `<cit.>` is normalized to a CITATION token before
+  tokenization; citation-introduction pattern classification is regex-based.
 
-## Notes
+## References
 
-- `local_artifacts/` is intentionally ignored. It holds generated corpora,
-  previous CSV outputs, run logs, smoke outputs, notebook backups, and local
-  Python caches.
-- The tracked `data/` directory only contains a tiny sample. It is not the full
-  corpus used for the Qwen pass.
-- Some existing tracked files may still be modified or deleted in the working
-  tree. Those are not part of the cleaned experiment layout.
+- `docs/ARCHITECTURE.md` — extractor pipeline design (metadata fetching,
+  LaTeX parsing, 3-tier classifier, checkpointing).
+- `experiments/qwen_curated/README.md` — experiment-specific notes and
+  manifest construction.
+- `TODO.md` — original notebook specification, used as the build target for
+  `analysis.ipynb`.
