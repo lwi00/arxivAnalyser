@@ -5,7 +5,7 @@ papers and looks for aggregate writing-style shifts between a pre-LLM (2015)
 group and a post-LLM (2025) group. It ships an extraction pipeline
 (`src/` + `cli.py`), an analysis notebook (`analysis.ipynb`), and a tracked
 language-model scoring experiment under `experiments/qwen_curated/`. The aim
-is not to classify individual papers as AI-written — it is to measure how the
+is not to classify individual papers as AI-written - it is to measure how the
 distribution of academic prose has moved.
 
 ## Research question
@@ -16,13 +16,13 @@ change the prose style of related-work sections in arXiv CS papers?
 The evidence is collected along four axes so that a shift in one can be
 cross-checked against the others:
 
-- **Surface style** — readability, lexical diversity, sentence structure,
+- **Surface style** - readability, lexical diversity, sentence structure,
   passive voice.
-- **Vocabulary markers** — phrases that prior literature flagged as
+- **Vocabulary markers** - phrases that prior literature flagged as
   LLM-favored ("delve into", "intricate", "underscores", ...).
-- **Structure** — word count, paragraph count, citation count, citation
+- **Structure** - word count, paragraph count, citation count, citation
   density.
-- **Model predictability** — causal-LM perplexity, sentence-level
+- **Model predictability** - causal-LM perplexity, sentence-level
   burstiness, and a Binoculars-style base/instruct ratio.
 
 ## Corpus
@@ -41,7 +41,7 @@ contains a tiny sample (one paper, `data/txt/1706.03762/`). The curated,
 word-count-balanced scoring manifest (3,919 + 3,919 papers) and the final
 Qwen metrics CSV are tracked under `experiments/qwen_curated/`.
 
-## Analysis — Part 1: Simple NLP
+## Analysis - Part 1: Simple NLP
 
 `analysis.ipynb` builds per-paper features from the extracted related-work
 text using NLTK tokenization and POS tagging, then compares the two year
@@ -65,7 +65,7 @@ sizes.
 
 The interpretation is that 2025 related-work prose is not "flatter" or
 shorter. It is denser, harder to read, more lexically varied, and less
-passive — consistent with what LLM-assisted writing tends to produce.
+passive - consistent with what LLM-assisted writing tends to produce.
 
 ### 1.2 LLM-favored vocabulary markers
 
@@ -101,19 +101,19 @@ Citation counts are essentially flat and citation-introduction patterns
 What changed is the prose between citations, not the scaffolding of the
 section.
 
-## Analysis — Part 2: Perplexity and burstiness
+## Analysis - Part 2: Perplexity and burstiness
 
 If the style shifts above are real, a causal language model should find the
 2025 sections slightly more predictable than the older ones. The notebook
 and the `experiments/qwen_curated/` scripts test that with three
 predictability-style metrics.
 
-- **Log perplexity** — how surprised a causal LM is by the document, per
+- **Log perplexity** - how surprised a causal LM is by the document, per
   token. Lower means more predictable.
-- **Sentence burstiness** — standard deviation (and coefficient of
+- **Sentence burstiness** - standard deviation (and coefficient of
   variation) of sentence-level perplexity across the document. Human text
   tends to be burstier than LLM text.
-- **Binoculars-style ratio** — the cross-perplexity of an instruction-tuned
+- **Binoculars-style ratio** - the cross-perplexity of an instruction-tuned
   model against its base model. Less sensitive to raw domain perplexity
   than a single-model score.
 
@@ -343,7 +343,7 @@ real words) and the filename-sanitizer used by the tex-to-text exporter.
   to 2015 beyond word-count stratification in the curated pass.
 - **GPT-2 vocabulary drift.** Absolute GPT-2 perplexity values are biased
   by the model's age; only Qwen2.5-0.5B is contemporary.
-- **Passive-voice heuristic.** POS-based, imperfect — picks up some false
+- **Passive-voice heuristic.** POS-based, imperfect - picks up some false
   positives on scientific prose.
 - **No causal claim.** This is a distribution-shift study. It does not
   attempt to label individual papers as AI-written or -assisted.
@@ -352,9 +352,9 @@ real words) and the filename-sanitizer used by the tex-to-text exporter.
 
 ## References
 
-- `docs/ARCHITECTURE.md` — extractor pipeline design (metadata fetching,
+- `docs/ARCHITECTURE.md` - extractor pipeline design (metadata fetching,
   LaTeX parsing, 3-tier classifier, checkpointing).
-- `experiments/qwen_curated/README.md` — experiment-specific notes and
+- `experiments/qwen_curated/README.md` - experiment-specific notes and
   manifest construction.
-- `TODO.md` — original notebook specification, used as the build target for
+- `TODO.md` - original notebook specification, used as the build target for
   `analysis.ipynb`.
