@@ -135,3 +135,6 @@ Thumbs.db
 
 arxiv-metadata-oai-snapshot.json
 data/metadata_cache.jsonl
+
+# Local generated artifacts, raw corpora, and archived experiment outputs.
+local_artifacts/

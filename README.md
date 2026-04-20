@@ -1,87 +1,209 @@
-# ArXiv Related Works Extractor
+# ArXiv Related-Work Analysis
 
-Large-scale extraction of Related Works sections from ArXiv CS papers (2022–2025) into a Parquet dataset.
+This repository extracts related-work sections from arXiv computer-science papers
+and analyzes whether newer related-work writing is easier for language models to
+predict than older writing.
 
-## Quickstart
+The current usable result is the curated Qwen pass in
+`experiments/qwen_curated/`. The raw/generated corpora and older intermediate
+outputs have been moved under `local_artifacts/`, which is ignored by git.
 
-### 1. Install
+## Current Result
+
+The main result file is:
+
+```text
+experiments/qwen_curated/qwen25_05b_curated_metrics.csv
+```
+
+It contains `7,838` balanced related-work samples:
+
+- `3,919` papers from the older corpus
+- `3,919` papers from the 2025 corpus
+- matched by word-count strata
+- scored with `Qwen/Qwen2.5-0.5B`
+
+Summary of the completed Qwen run:
+
+| year group | mean log perplexity | mean perplexity | burstiness std | burstiness cv |
+| --- | ---: | ---: | ---: | ---: |
+| 2015 | 3.0061 | 21.2919 | 0.8923 | 0.1958 |
+| 2025 | 2.9694 | 20.7033 | 0.8930 | 0.1974 |
+
+Interpretation: Qwen finds the 2025 related-work sections slightly more
+predictable than the older matched sample. The direction matches the GPT-2
+baseline, but the effect is still small.
+
+## Repository Layout
+
+```text
+.
+├── analysis.ipynb                         # Original exploratory/statistical notebook
+├── cli.py                                 # Top-level extractor CLI
+├── configs/
+│   └── default.yaml                       # Default extraction configuration
+├── data/                                  # Tracked tiny sample data only
+├── docs/
+│   └── ARCHITECTURE.md                    # Extraction architecture notes
+├── experiments/
+│   └── qwen_curated/
+│       ├── README.md                      # Experiment-specific notes
+│       ├── build_curated_manifest.py      # Builds the balanced manifest
+│       ├── curated_manifest_gpt2.csv      # Manifest used by GPT-2 and Qwen runs
+│       ├── qwen25_05b_curated_metrics.csv # Final Qwen metrics
+│       ├── run_gpt2_curated.py            # Generic causal-LM scoring script
+│       ├── run_binoculars.py              # Earlier Binoculars-style reference script
+│       ├── run_perplexity.py              # Earlier GPT-2-medium reference script
+│       └── configs/
+│           └── 2025.yaml                  # 2025 corpus extraction configuration
+├── local_artifacts/                       # Ignored generated data and old outputs
+├── src/                                   # Extractor implementation
+└── tests/                                 # Unit tests
+```
+
+## Methodology
+
+### 1. Related-Work Extraction
+
+The extraction pipeline downloads arXiv sources, parses LaTeX, classifies
+sections, and writes related-work text files. The relevant modules are in `src/`:
+
+- `metadata.py`: metadata fetching
+- `downloader.py`: source download and retry handling
+- `latex_parser.py`: LaTeX parsing
+- `section_classifier.py`: section detection/classification
+- `tex_to_txt.py`: text export
+- `pipeline.py`: orchestration and checkpointing
+
+The 2025 extraction configuration used for the generated corpus is archived at:
+
+```text
+experiments/qwen_curated/configs/2025.yaml
+```
+
+The generated raw corpora used for the completed run are not tracked. They are
+currently stored locally at:
+
+```text
+local_artifacts/2026-04-20-cleanup/corpus/data_txt_untracked
+local_artifacts/2026-04-20-cleanup/corpus/data-2025/txt
+```
+
+### 2. Curated Manifest
+
+The manifest builder creates a balanced comparison set from the two corpora. It:
+
+- reads related-work `.txt` files from both groups
+- removes very short or low-text-quality samples
+- caps extreme lengths per year group
+- bins papers into pooled word-count strata
+- samples the same number from each year group in each stratum
+
+The produced manifest is:
+
+```text
+experiments/qwen_curated/curated_manifest_gpt2.csv
+```
+
+Despite the filename, the manifest is model-independent. It was first used for
+GPT-2, then reused for Qwen so the comparison stayed fixed.
+
+### 3. Language-Model Scoring
+
+The scoring script computes:
+
+- document-level log perplexity
+- document-level perplexity
+- sentence-level burstiness standard deviation
+- sentence-level burstiness coefficient of variation
+- token and sentence counts used for scoring
+
+The current run used:
+
+```text
+Qwen/Qwen2.5-0.5B
+```
+
+on a RunPod H100 GPU. The first full pass used a larger batch size and hit CUDA
+OOM during sentence-level scoring near the heavy tail; checkpointing preserved
+the completed rows, and the run was resumed with a smaller batch size.
+
+## Reproducing The Qwen Pass
+
+Install the analysis dependencies:
+
+```bash
+pip install -e ".[analysis]"
+```
+
+Run from the repository root. Because the generated corpora are now archived
+under `local_artifacts/`, pass their paths explicitly:
+
+```bash
+python experiments/qwen_curated/run_gpt2_curated.py \
+  --manifest experiments/qwen_curated/curated_manifest_gpt2.csv \
+  --output experiments/qwen_curated/qwen25_05b_curated_metrics.csv \
+  --model Qwen/Qwen2.5-0.5B \
+  --data-2015 local_artifacts/2026-04-20-cleanup/corpus/data_txt_untracked \
+  --data-2025 local_artifacts/2026-04-20-cleanup/corpus/data-2025/txt \
+  --batch-size 8 \
+  --checkpoint-every 100 \
+  --log-every 50
+```
+
+The script resumes automatically from `*.partial` files and leaves the final CSV
+only after all rows are written.
+
+## Using The Existing Results
+
+For most analysis work, load the final Qwen CSV directly:
+
+```python
+import pandas as pd
+
+df = pd.read_csv(
+    "experiments/qwen_curated/qwen25_05b_curated_metrics.csv",
+    dtype={"arxiv_id": str, "year_group": str},
+)
+
+summary = df.groupby("year_group")[
+    ["log_perplexity", "perplexity", "burstiness_std", "burstiness_cv"]
+].mean()
+print(summary)
+```
+
+The original `analysis.ipynb` still contains older hard-coded paths. If it is
+used again without edits, it will not automatically pick up the moved Qwen
+result file or the ignored raw corpora.
+
+## Extraction Pipeline Quickstart
+
+Install the package:
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-### 2. Test on a Single Paper
+Run tests:
 
 ```bash
-python -m src.cli single 2301.12345
+pytest
 ```
 
-This downloads the source, parses sections, and prints the results. Great for verifying the pipeline works.
-
-### 3. Fetch Metadata
-
-**Option A — Kaggle dataset (recommended for speed):**
-Download the [ArXiv dataset from Kaggle](https://www.kaggle.com/datasets/Cornell-University/arxiv), then:
+Run the extractor CLI against the default configuration:
 
 ```bash
-python -m src.cli metadata --source kaggle --kaggle-json arxiv-metadata-oai-snapshot.json
+python cli.py run --config configs/default.yaml
 ```
 
-**Option B — OAI-PMH (complete but slow):**
+See `docs/ARCHITECTURE.md` for pipeline design notes and operational details.
 
-```bash
-python -m src.cli metadata --source oai --date-start 2022-01-01 --date-end 2025-12-31
-```
+## Notes
 
-### 4. Run Full Pipeline
-
-```bash
-python -m src.cli run --config configs/default.yaml --kaggle-json arxiv-metadata-oai-snapshot.json
-```
-
-The pipeline saves checkpoints every 1000 papers and can be resumed if interrupted.
-
-### 5. Load Results
-
-```python
-import pandas as pd
-df = pd.read_parquet("output/arxiv_cs_sections.parquet")
-print(f"Papers: {len(df)}")
-print(f"With all sections: {df['extraction_success'].sum()}")
-print(df[['arxiv_id', 'title', 'sections_found']].head())
-```
-
-## Configuration
-
-Edit `configs/default.yaml` to adjust:
-- Date range and categories
-- Download concurrency and rate limits
-- Number of parallel workers
-- LLM fallback settings (model, budget)
-- Output path and compression
-
-## Architecture
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details on the pipeline design, component breakdown, resource estimates, and deployment options.
-
-## Project Structure
-
-```
-arxiv_section_extractor/
-├── configs/
-│   └── default.yaml          # Pipeline configuration
-├── docs/
-│   └── ARCHITECTURE.md       # Detailed architecture docs
-├── src/
-│   ├── cli.py                # Command-line interface
-│   ├── metadata.py           # ArXiv metadata fetching
-│   ├── downloader.py         # Source/PDF downloading
-│   ├── latex_parser.py       # LaTeX → sections
-│   ├── pdf_extractor.py      # PDF → sections (fallback)
-│   ├── section_classifier.py # Section type classification
-│   ├── pipeline.py           # Orchestration & checkpointing
-│   └── models.py             # Data models
-├── tests/
-├── pyproject.toml
-└── README.md
-```
+- `local_artifacts/` is intentionally ignored. It holds generated corpora,
+  previous CSV outputs, run logs, smoke outputs, notebook backups, and local
+  Python caches.
+- The tracked `data/` directory only contains a tiny sample. It is not the full
+  corpus used for the Qwen pass.
+- Some existing tracked files may still be modified or deleted in the working
+  tree. Those are not part of the cleaned experiment layout.

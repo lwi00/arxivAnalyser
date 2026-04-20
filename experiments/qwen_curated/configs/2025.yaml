@@ -1,0 +1,85 @@
+# ArXiv Section Extractor Configuration — 2025 papers
+# ====================================================
+
+# Target papers
+query:
+  # ArXiv categories to include (all cs.* subcategories)
+  categories:
+    - "cs.*"
+  # Date range (inclusive)
+  date_start: "2025-01-01"
+  date_end: "2025-12-31"
+
+# Download settings
+download:
+  # Where to store downloaded source files
+  data_dir: "./data-2025"
+  # Subdirectories
+  sources_dir: "./data-2025/sources"     # LaTeX .tar.gz files
+  # Max concurrent downloads / HEAD probes
+  max_concurrent: 5
+  # Delay between requests in seconds (be respectful to ArXiv)
+  request_delay: 3.0
+  # Probe source availability via HEAD requests before downloading
+  # Filters out papers without LaTeX source, saving bandwidth and time
+  probe_source_availability: true
+  # Retry settings
+  max_retries: 3
+  retry_delay: 10.0
+
+# LaTeX parsing settings
+latex:
+  # Max file size to parse (bytes) - skip very large files
+  max_file_size: 10_000_000  # 10 MB
+  # Encoding fallbacks
+  encodings:
+    - "utf-8"
+    - "latin-1"
+    - "ascii"
+
+# Section classification
+classification:
+  # Use heuristic matching first, then LLM for ambiguous cases
+  use_llm_fallback: true
+  # LLM settings (only used if use_llm_fallback is true)
+  llm:
+    model: "claude-sonnet-4-20250514"
+    max_tokens: 1024
+    # Max papers to send to LLM (cost control)
+    max_llm_calls: 10000
+
+# Output settings
+output:
+  # Output file path
+  path: "./output/arxiv_cs_2025_related_works.parquet"
+  # Parquet compression
+  compression: "snappy"
+  # Write intermediate checkpoints every N papers
+  checkpoint_interval: 1000
+  # Enable .tex → .txt conversion (writes plain text alongside Parquet)
+  txt_export: true
+  # Directory for .txt output files
+  txt_dir: "./data-2025/txt"
+  # Only write related works sections as .txt (skip other sections)
+  txt_related_only: true
+  # Skip Parquet output entirely — only produce .txt files
+  txt_only_mode: false
+
+# Processing settings
+processing:
+  # Number of worker processes for parallel parsing
+  num_workers: 4
+  # Log level
+  log_level: "INFO"
+  # Resume from checkpoint if available
+  resume: true
+  # Max papers to process per run (0 = unlimited)
+  # Useful for incremental runs: pass full metadata, process N at a time
+  max_papers_per_run: 1000
+  # Progress tracking file
+  progress_file: "./data-2025/progress.json"
+  # Optional date filter: only process papers published on/after this date (YYYY-MM-DD)
+  # Applied after loading from cache, before downloading. Null = no filter.
+  filter_date_start: null
+  # Optional date filter: only process papers published on/before this date (YYYY-MM-DD)
+  filter_date_end: null
